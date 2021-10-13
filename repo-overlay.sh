@@ -1,55 +1,16 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2012,SC2068,SC2076,SC2086,SC2128,SC2199
+# shellcheck disable=SC2001,SC2012,SC2048,SC2068,SC2076,SC2086,SC2128,SC2155,SC2199
 # Copyright 2021, NVIDIA Corporation
 # SPDX-License-Identifier: MIT
 
-current=$(readlink -e "$(dirname $0)")
-debianMetadata="${current}/repo-triforce-debian.sh"
-rpmMetadata="${current}/repo-triforce-rpm.sh"
+current=$(readlink -e "$(dirname ${BASH_SOURCE[0]})")
+debianMetadata="${current}/repo-debian.sh"
+rpmMetadata="${current}/repo-rpm.sh"
 
-fileManifest="${PWD}/manifest.list"
-outputDir="$PWD/out"
-onlynewDir="$PWD/new"
-tempDir="$PWD/tmp"
-imgSize="2048"
-onetimeFS="${tempDir}/upper.img"
-scratch="${tempDir}/scratch"
-mountDir="${tempDir}/overlay"
-
-# Overrides
-while [[ $1 =~ ^-- ]]; do
-    # Output directory
-    if [[ "$1" =~ "--output=" ]]; then
-        outputDir=$(echo "$1" | awk -F '=' '{print $2}')
-    elif [[ "$1" =~ "--filter=" ]]; then
-        include=$(echo "$1" | awk -F '=' '{print $2}')
-        filter+=("$include")
-    # Server via HTTP
-    elif [[ "$1" == "--http" ]]; then
-        onlyhttp=1
-    # Skip new package copy
-    elif [[ "$1" == "--onlymeta" ]]; then
-        onlymeta=1
-    # Skip metadata generation
-    elif [[ "$1" == "--onlyrecent" ]]; then
-        onlyrecent=1
-    # Skip metadata generation
-    elif [[ "$1" == "--onlyhistory" ]]; then
-        onlyhistory=1
-    # Enable full file copy
-    elif [[ "$1" == "--history" ]]; then
-        fullhistory=1
-    # Clean overlayFS mount
-    elif [[ "$1" == "--clean" ]]; then
-        clean=1
-    fi
-    shift
-done
-
-# First parameter is path to public snapshot
-mirror="$1"
-shift
-
+outputDir="$PWD/new"
+workDir="$PWD"
+imgSize="2048" # 2 GiB
+optimize=1     # try to reduce image size
 
 clean_up() {
     cd /
@@ -57,6 +18,7 @@ clean_up() {
     [[ -d "$mountDir" ]] && rmdir "$mountDir"
     [[ -d "$mountDir" ]] && sudo umount -l "$mountDir"
     [[ -d "$scratch" ]] && sudo umount "$scratch"
+    [[ -f "$onetimeFS" ]] && rm "$onetimeFS"
     [[ -d "$mountDir" ]] && rmdir "$mountDir"
     [[ -d "$scratch" ]] && rm -rf "$scratch"
 }
@@ -75,17 +37,56 @@ err() {
 }
 
 usage() {
-    echo "USAGE: $0 [mirror] [dir] { [dir] ... }"
-    echo "  --output=        output directory"
-    echo "  --filter=        include repo"
-    echo "  --http           HTTP server"
-    echo "  --onlymeta       Save only the metadata"
-    echo "  --onlyrecent"
-    echo "  --onlyhistory"
-    echo "  --history"
-    echo "  --clean"
+    echo "USAGE: $0 [options] <mirror> <dir> { [dir] ... }"
+    echo
+    echo " PARAMETERS:"
+    echo -e "  --mirror=<directory>\t source of truth public snapshot\t\t $mirror"
+    echo -e "  <dir>\t\t\t one or more input directories to overlay\t $ARGS"
+    echo
+    echo " OPTIONS:"
+    echo -e "  --filter=<repo>\t limit to select distro/arch repo(s)\t\t\t ${filter[*]}"
+    echo -e "  --output=<directory>\t the save location\t\t\t\t $outputDir"
+    echo -e "  --workdir=<directory>\t scratch area for temp files\t\t\t $workDir"
+    echo -e "  --size=<megabytes>\t image file size for overlay\t\t\t (default: $imgSize)"
+    echo -e "  --keep-new\t\t save the new files\t\t\t\t $savepkgs"
+    echo -e "  --clean\t\t un-mount stale overlayFS mountpoints\t\t $clean"
+    echo
+
+    if [[ -n $1 ]]; then
+        echo "ERROR: $*"
+        exit 1
+    else
+        exit 0
+    fi
+}
+
+run_cmd() {
+    echo
+    echo ">>> $*" | fold -s
+    time eval "$*"
+}
+
+run_rsync() {
+    run_cmd rsync -av $*
+}
+
+preflight_checks() {
+    # Minimum requirements
+    kernelMajor=$(uname -r 2>/dev/null | awk -F '.' '{print $1}')
+    pythonMajor=$(type -p python3 2>/dev/null)
+    createRepo=$(type -p createrepo_c 2>/dev/null)
+    [[ $kernelMajor -gt 3 ]] || err "Kernel must be 4.x or newer for overlayFS"
+    [[ $pythonMajor =~ "3" ]] || err "Python 3.x required for modularity"
+    [[ -n $createRepo ]] || err "Missing depends for RPM repos"
+
+    # FIXME
+    userGroup=$(ls --color=none -ld $PWD 2>/dev/null | awk '{print $3":"$4}')
+
+    # Cleanup previous runs
+    mkdir -p "$tempDir"
+    cd "$tempDir" >/dev/null || err "unable to cd to $tempDir"
+    rm -f -- "$fileManifest"
     clean_up
-    exit 1
 }
 
 package_metadata() {
@@ -108,19 +109,52 @@ package_metadata() {
             echo "==> skipping repo: $subpath"
         elif [[ -n "$rpmFormat" ]]; then
             unset rpmFormat
-            echo "==> rpm_metadata $mountDir $subpath"
-            time $rpmMetadata "$mountDir" "$subpath"
+            echo "==> rpm_metadata --input $mountDir --mirror $mirror --repo $subpath"
+            time $rpmMetadata --input "$mountDir" --mirror "$mirror" --repo "$subpath"
             echo
         elif [[ -n "$debFormat" ]]; then
             unset debFormat
-            echo "==> deb_metadata $mirror $mountDir $subpath"
-            time $debianMetadata "$mirror" "$mountDir" "$subpath"
+            echo "==> deb_metadata --input $mountDir --mirror $mirror --repo $subpath"
+            time $debianMetadata --input "$mountDir" --mirror "$mirror" --repo "$subpath"
             echo
         else
             echo "==> skipping unimplemented format: $subpath"
         fi
     done
     echo
+}
+
+min_tempsize() {
+    echo "==> Calculating scratch size"
+    local depthTwo=$(find $@ -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort -r)
+    unset sumLocal sumRemote
+    for repoPath in $depthTwo; do
+        local subdir=$(echo $repoPath | awk -F "/" '{print $(NF-1)"/"$(NF)}')
+        echo -n "."
+        local localSize=$(du -sc -BM ${repoPath}/repodata ${repoPath}/Packages* 2>/dev/null | tail -n 1 | awk -F "M" '{print $1}')
+        local remoteSize=$(du -sc -BM ${mirror}/${subdir}/repodata ${mirror}/${subdir}/Packages* 2>/dev/null | tail -n 1 | awk -F "M" '{print $1}')
+        sumLocal=$((sumLocal + localSize))
+        sumRemote=$((sumRemote + remoteSize))
+    done
+
+    repoSum=$((sumLocal + sumRemote))
+    echo
+
+    # Powers of 2
+    for n in $(seq 1 12); do
+        powerTwo=$((2**n))
+        if [[ $repoSum -le $powerTwo ]]; then
+            break
+        fi
+    done
+
+    # Sanity check
+    if [[ $repoSum -gt $powerTwo ]]; then
+        err "Power of 2 overflow detected (${repoSum}M > ${powerTwo}M, specify custom --size"
+    fi
+
+    echo ":: Optimal scratch size: ${repoSum}M -> ${powerTwo}M"
+    imgSize="$powerTwo"
 }
 
 mount_tempfs() {
@@ -153,60 +187,86 @@ mount_overlay() {
 }
 
 save_new_metadata() {
-    echo ":: Saving to $onlynewDir"
+    echo ":: Saving to $outputDir"
     # Metadata
-    echo ">>> rsync -av ${scratch}/upper/ $onlynewDir"
-    time rsync -av "${scratch}/upper"/ "$onlynewDir"
+    run_rsync "${scratch}/upper"/ "$outputDir"
     echo
 }
 
 save_new_packages() {
-    echo ":: Saving to $onlynewDir"
+    echo ":: Saving to $outputDir"
     # Packages
     repos=$(find ${active[@]} -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)
     for path in $repos; do
         subpath=$(echo $path | awk -F "/" '{print $(NF-1)"/"$(NF)}')
-        mkdir -p "$onlynewDir/${subpath}"/
-        echo ">>> rsync -av --include='*.deb' --include='*.rpm' --include='*.repo' --include='*.pin' --include='*.pub' --include='*.json' --exclude='*' ${path}/ $onlynewDir/${subpath}/"
-        time rsync -av --include="*.deb" --include="*.rpm" --include="*.repo" --include="*.pin" --include="*.pub" --include="*.json" --exclude="*" "${path}"/ "$onlynewDir/${subpath}"/
+        mkdir -p "$outputDir/${subpath}"/
+        run_rsync --include="*.deb" --include="*.rpm" --include="*.repo" --include="*.pin" --include="*.pub" --include="*.json" --exclude="*" "${path}"/ "$outputDir/${subpath}"/
 
         if [[ -f "${path}/precompiled/index.html" ]]; then
-            echo ">>> rsync -av --include='*.html' --exclude='*' ${path}/precompiled/ $onlynewDir/${subpath}/precompiled/"
-            time rsync -av --include="*.html" --exclude="*" "${path}/precompiled"/ "$onlynewDir/${subpath}/precompiled"/
+            run_rsync --include="*.html" --exclude="*" "${path}/precompiled"/ "$outputDir/${subpath}/precompiled"/
         fi
     done
     echo
 }
 
-save_full_history() {
-    echo ":: Saving to $outputDir"
-    repos=$(find ${active[@]} -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)
-    for path in $repos; do
-        subpath=$(echo $path | awk -F "/" '{print $(NF-1)"/"$(NF)}')
-        mkdir -p "$outputDir/${subpath}"/
-        echo ">>> rsync --ignore-existing -av ${mountDir}/${subpath}/ $outputDir/${subpath}/"
-        time rsync --ignore-existing -av "${mountDir}/${subpath}"/ "$outputDir/${subpath}"/
-    done
-    echo
-}
 
+# Overrides
+while [[ $1 =~ ^-- ]]; do
+    # Filter repos
+    if [[ "$1" =~ "--filter=" ]]; then
+        include=$(echo "$1" | awk -F '=' '{print $2}')
+        filter+=("$include")
+    elif [[ "$1" =~ ^--filter$ ]]; then
+        shift; filter+=("$1")
+    # Output directory
+    elif [[ "$1" =~ "--output=" ]]; then
+        outputDir=$(echo "$1" | awk -F '=' '{print $2}')
+    elif [[ "$1" =~ ^--output$ ]]; then
+        shift; outputDir="$1"
+    # Scratch directory
+    elif [[ $1 =~ "workdir=" ]]; then
+        workDir=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--workdir$ ]]; then
+        shift; workDir="$1"
+    # Source of truth
+    elif [[ $1 =~ "mirror=" ]]; then
+        mirror=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--mirror$ ]]; then
+        shift; mirror="$1"
+    # Specify image size
+    elif [[ "$1" =~ "--size=" ]]; then
+        customSize=$(echo "$1" | awk -F '=' '{print $2}')
+    elif [[ "$1" =~ --size$ ]]; then
+        shift; customSize="$1"
+    # Save new packages
+    elif [[ "$1" == "--keep-new" ]]; then
+        savepkgs=1
+    # Clean overlayFS mount
+    elif [[ "$1" == "--clean" ]]; then
+        clean=1
+    # Usage
+    elif [[ "$1" == "--help" ]]; then
+        usage
+    fi
+    shift
+done
 
-# Minimum requirements
-kernelMajor=$(uname -r 2>/dev/null | awk -F '.' '{print $1}')
-pythonMajor=$(type -p python3 2>/dev/null)
-createRepo=$(type -p createrepo_c 2>/dev/null)
-[[ $kernelMajor -gt 3 ]] || err "Kernel must be 4.x or newer for overlayFS"
-[[ $pythonMajor =~ "3" ]] || err "Python 3.x required for modularity and HTTP"
-[[ -n $createRepo ]] || err "Missing depends for RPM repos"
+ARGS=$(echo "$@" | sed 's| |\n\t\t\t\t\t\t\t\t\t |g')
+[[ -d $mirror ]] || usage "Must specify --mirror path to public snapshot"
+[[ -d $1 ]] || usage "Must specify at least one directory to overlay"
 
-# Sanity checks
-if [[ $clean ]]; then clean_up; exit 0; fi
-[[ -n $1 ]] || usage
-[[ -d "$mirror" ]] || err "Mirror not found"
-[[ -d "$outputDir" ]] && rm -rf "$outputDir"
+fileManifest="${workDir}/manifest.list"
+tempDir="${workDir}/tmp"
+onetimeFS="${tempDir}/upper.img"
+scratch="${tempDir}/scratch"
+mountDir="${tempDir}/overlay"
 
-# FIXME
-userGroup=$(ls --color=none -ld $PWD 2>/dev/null | awk '{print $3":"$4}')
+if [[ $clean ]]; then
+    clean_up
+    exit 0
+else
+    preflight_checks "$1"
+fi
 
 # Prepare overlayFS parameters
 unset layers
@@ -225,53 +285,28 @@ if [[ -z $active ]]; then
     exit 1
 fi
 
-# Cleanup previous runs
-mkdir -p "$tempDir"
-cd "$tempDir" >/dev/null || err "unable to cd to $tempDir"
-rm -f "$fileManifest"
-clean_up
-
-
-if [[ ! $onlyhistory ]]; then
-    # Create scratch filesystem
-    mount_tempfs
-
-    # Overlay filesystems as layers
-    mount_overlay
+if [[ -n "$optimize" ]] && [[ -z "$customSize" ]]; then
+    min_tempsize ${active[@]}
 fi
 
-if [[ $onlyhttp ]]; then
-    # Serve overlay via HTTP
-    cd "$mountDir" || err "unable to cd to $mountDir"
-    python3 -m http.server 8080 || err "unable to launch http server on :8080"
-elif [[ $onlymeta ]]; then
-    # Generate repo metadata
-    package_metadata
+# Create scratch filesystem
+mount_tempfs
 
-    # Save metadata to disk
-    save_new_metadata
-elif [[ $onlyrecent ]]; then
-    # Save new packages to disk
+# Overlay filesystems as layers
+mount_overlay
+
+# Generate repo metadata
+package_metadata
+
+# Save new packages to disk
+if [[ -n $savepkgs ]]; then
     save_new_packages
-elif [[ $onlyhistory ]]; then
-    # Save full history to disk
-    save_full_history
-else
-    ### Defaults
-    # Generate repo metadata
-    package_metadata
-
-    # Save new packages to disk
-    save_new_packages
-
-    # Save metadata to disk
-    save_new_metadata
-
-    # Save full history to disk
-    if [[ $fullhistory ]]; then
-        save_full_history
-    fi
 fi
+
+# Save metadata to disk
+save_new_metadata
 
 # Remove temp files
 clean_up
+[[ -d "$tempDir" ]] &&
+rmdir "$tempDir"
