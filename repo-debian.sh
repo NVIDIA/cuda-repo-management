@@ -3,26 +3,32 @@
 # Copyright 2021, NVIDIA Corporation
 # SPDX-License-Identifier: MIT
 
-# CLI
-workDir="$1"
-mirror="$2"
-mountDir="$3"
-subpath="$4"
-nocache="$5"
+publicKey="7fa2af80" # set this to shortname for GPG keypair
 
-fileManifest="${workDir}/manifest.list"
-gpgkeyName="" # set this to shortname for GPG keypair
 
-err() {
-    echo "ERROR: $*"
-    exit 1
+err() { echo "ERROR: $*"; exit 1; }
+
+usage() {
+    echo "USAGE: $0 <input> <mirror> <repo> [workdir] [gpgkey]"
+    echo
+    echo " PARAMETERS:"
+    echo -e "  --input=<directory>\t overlay with changes"
+    echo -e "  --mirror=<directory>\t source of truth"
+    echo -e "  --repo=<subdirectory>\t \$distro/\$arch to traverse"
+    echo
+    echo " OPTIONAL:"
+    echo -e "  --nocache\t rebuild metadata"
+    echo -e "  --gpgkey=<name>\t shortname for GPG signing keypair"
+    echo -e "  --workdir=<directory>\t scratch area for temp files"
+    echo
+    err "$*"
 }
 
 compare_file() {
     local file1=$(md5sum "$mirror/$2/$3" | awk '{print $1}')
     local file2=$(md5sum "$1/$2/$3" | awk '{print $1}')
-    echo ":: [file1] $mirror/$2/$3: $file1"
-    echo ":: [file2] $1/$2/$3: $file2"
+    echo " -> [file1] $mirror/$2/$3: $file1"
+    echo " -> [file2] $1/$2/$3: $file2"
     if [[ "$file1" == "$file2" ]]; then
         echo ":: files are identical"
         return 0
@@ -48,19 +54,13 @@ deb_md5sum() {
     fi
 }
 
-compare_md5sum() {
-    [[ -d "$1" ]] || err "USAGE: compare_md5sum() <dir1> [dir2] [subpath] [format]"
-    [[ -d "$2" ]] || err "USAGE: compare_md5sum() [dir1] <dir2> [subpath] [format]"
-    [[ -n "$3" ]] || err "USAGE: compare_md5sum() [dir1] [dir2] <subpath> [format]"
-    [[ -n "$4" ]] || err "USAGE: compare_md5sum() [dir1] [dir2] [subpath] <format>"
+compare_debian_md5sum() {
+    [[ -d "$1" ]] || err "USAGE: compare_debian_md5sum() <dir1> [dir2] [subpath]"
+    [[ -d "$2" ]] || err "USAGE: compare_debian_md5sum() [dir1] <dir2> [subpath]"
+    [[ -n "$3" ]] || err "USAGE: compare_debian_md5sum() [dir1] [dir2] <subpath>"
 
-    if [[ "$4" == "deb" ]]; then
-        file1=$(deb_md5sum "$1" "$3")
-        file2=$(deb_md5sum "$2" "$3")
-    else
-        echo "WARNING: unknown package format: $4"
-        return 1
-    fi
+    file1=$(deb_md5sum "$1" "$3")
+    file2=$(deb_md5sum "$2" "$3")
 
     echo "$file1"
     echo "---"
@@ -70,11 +70,8 @@ compare_md5sum() {
     two_way=$(comm -1 -3 <(echo "$file1" | sort) <(echo "$file2" | sort) | grep -v "^==>" | sort -k2)
     echo "$two_way"
 
-    # Needed to flush CDN cache
     for line in $(echo "$two_way" | awk '{print $2}'); do
-        if [[ "$4" == "deb" ]]; then
-            echo "${subpath}/${line}" >> "$fileManifest"
-        fi
+        echo "${subpath}/${line}" >> "$fileManifest"
     done
 
     diff_count=$(echo "$two_way" | wc -l)
@@ -162,10 +159,11 @@ deb_metadata() {
         donorManifest=$(gunzip -c Packages.gz 2>/dev/null)
         bytes1=$(echo "$donorManifest" | grep -e "^Filename:" -e "^Size:" | awk '{print $NF}')
         bytes1=$(echo "$bytes1" | sed 's|\.\/| |' | paste -d " " - - | awk '{print $2, $1}' | column -t | sort)
+
+        cd "${parent}/${subpath}" || err "unable to cd to $parent / $subpath"
         echo -n "..."
 
         # Calculate bytes from local DEB packages
-        cd "${parent}/${subpath}" || err "unable to cd to $parent / $subpath"
         bytes2=$(du -b -- *.deb | column -t | sort)
         echo -n "..."
 
@@ -183,12 +181,11 @@ deb_metadata() {
     pkg_count=$(echo "$deb_packages" | wc -l)
     [[ $pkg_count -gt 0 ]] || err "no new packages"
     echo ">>> deb_pkg_info($pkg_count)"
-    cd "${mountDir}/${subpath}" || err "unable to cd to $mountDir / $subpath"
+    cd "${inputDir}/${subpath}" || err "unable to cd to $inputDir / $subpath"
 
     #
-    # NOTE: this saves about 30 min !
-    # Manually process new or modified DEB packages
-    #echo -e "Someone owes me a beer\n"
+    # Manually process new or modified Debian packages
+    #
     PackagesNew="Packages.new"
     rm -f "$PackagesNew"
     touch "$PackagesNew"
@@ -248,6 +245,7 @@ deb_metadata() {
       echo "SHA256:"
       printf " %s %16d %s\n" $txt_sha256 $txt_bytes Packages
       printf " %s %16d %s\n" $gz_sha256 $gz_bytes Packages.gz
+
       # FIXME prevent hash mismatch error
       echo "Acquire-By-Hash: no"
     } > "$Release"
@@ -259,17 +257,72 @@ deb_metadata() {
     cat Release
     echo
 
+    echo "==> Sanity check for Release"
+    compare_file "$parent" "$subpath" "Release" && err "expected new metadata"
+    echo
+
     # Sign checksum file with key
     echo ">>> gpg -u ${gpgkeyName} --yes --armor --detach-sign --personal-digest-preferences SHA512 --output Release.gpg Release"
-    gpg -u ${gpgkeyName} --yes --armor --detach-sign --personal-digest-preferences SHA512 --output Release.gpg Release || err "gpg failed to detach signature";
+    gpg -u ${gpgkeyName} --yes --armor --detach-sign --personal-digest-preferences SHA512 --output Release.gpg Release || err "gpg failed to detach signature"
     [[ -f "Release.gpg" ]] || err "Release.gpg file not found"
     echo ":: Release.gpg"
 
     cd "$oldPWD" >/dev/null
     echo
 
-    compare_md5sum "$mirror" "$mountDir" "$subpath" "deb"
+    compare_debian_md5sum "$mirror" "$inputDir" "$subpath"
     echo
 }
 
-deb_metadata "$mirror" "$mountDir" "$subpath"
+
+# Options
+while [[ $1 =~ ^-- ]]; do
+    # Full rebuild of metadata
+    if [[ $1 =~ ^--nocache$ ]] || [[ $1 =~ ^--no-cache$ ]]; then
+        nocache=1
+    # Repository relative path
+    elif [[ $1 =~ "repo=" ]]; then
+        subpath=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--repo$ ]]; then
+        shift; subpath="$1"
+    # Scratch directory
+    elif [[ $1 =~ "workdir=" ]]; then
+        workDir=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--workdir$ ]]; then
+        shift; workDir="$1"
+    # Source of truth
+    elif [[ $1 =~ "mirror=" ]]; then
+        mirror=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--mirror$ ]]; then
+        shift; mirror="$1"
+    # Release candidate
+    elif [[ $1 =~ "input=" ]]; then
+        inputDir=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--input$ ]]; then
+        shift; inputDir="$1"
+    # Signing key name
+    elif [[ $1 =~ "gpg=" ]] || [[ $1 =~ "gpgkey=" ]]; then
+        gpgkeyName=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--gpg$ ]] || [[ $1 =~ ^--gpgkey$ ]]; then
+        shift; gpgkeyName="$1"
+    fi
+    shift
+done
+
+
+[[ -d "$inputDir" ]] || usage "Must specify --input directory (read-write)"
+[[ -d "$mirror" ]]   || usage "Must specify --mirror directory (read-only)"
+[[ -n "$subpath" ]]  || usage "Must specify --repo relative subdirectory (\$distro/\$arch)"
+
+# Set default signing key
+[[ -n "$gpgkeyName" ]] || gpgkeyName="$publicKey"
+
+# Temp files
+[[ -n "$workDir" ]] || workDir=$(mktemp -d)
+[[ -d "$workDir" ]] || mkdir -p "$workDir"
+fileManifest="${workDir}/manifest.list"
+
+# Update Debian metadata
+deb_metadata "$mirror" "$inputDir" "$subpath"
+
+### END ###

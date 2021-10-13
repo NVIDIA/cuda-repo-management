@@ -3,32 +3,36 @@
 # Copyright 2021, NVIDIA Corporation
 # SPDX-License-Identifier: MIT
 
-# CLI
-workDir="$1"
-mirror="$2"
-mountDir="$3"
-subpath="$4"
-forpath="$5"
+publicKey="7fa2af80" # set this to shortname for GPG keypair
+moduleName="nvidia-driver"
 
-current=$(readlink -e "$(dirname $0)")
-parentDir=$(dirname "$current")
-genmodulespy="${parentDir}/genmodules.py"
+current=$(readlink -e "$(dirname ${BASH_SOURCE[0]})")
+genmodulesLOCAL="${current}/genmodules.py"
+genmodulesPATH=$(type -p genmodules.py)
 
-fileManifest="${workDir}/manifest.list"
-tempDir="${workDir}/tmp"
-createrepoLog="${tempDir}/createrepo.log"
-gpgkeyName="" # set this to shortname for GPG keypair
 
-err() {
-    echo "ERROR: $*"
-    exit 1
+err() { echo "ERROR: $*"; exit 1; }
+
+usage() {
+    echo "USAGE: $0 <input> <mirror> <repo> [workdir] [gpgkey]"
+    echo
+    echo " PARAMETERS:"
+    echo -e "  --input=<directory>\t overlay with changes"
+    echo -e "  --mirror=<directory>\t source of truth"
+    echo -e "  --repo=<subdirectory>\t \$distro/\$arch to traverse"
+    echo
+    echo " OPTIONAL:"
+    echo -e "  --gpgkey=<name>\t shortname for GPG signing keypair"
+    echo -e "  --workdir=<directory>\t scratch area for temp files"
+    echo
+    err "$*"
 }
 
 compare_file() {
     local file1=$(md5sum "$mirror/$2/$3" | awk '{print $1}')
     local file2=$(md5sum "$1/$2/$3" | awk '{print $1}')
-    echo ":: [file1] $mirror/$2/$3: $file1"
-    echo ":: [file2] $1/$2/$3: $file2"
+    echo " -> [file1] $mirror/$2/$3: $file1"
+    echo " -> [file2] $1/$2/$3: $file2"
     if [[ "$file1" == "$file2" ]]; then
         echo ":: files are identical"
         return 0
@@ -48,25 +52,19 @@ rpm_md5sum() {
     local subpath="$2"
 
     rpms=$(find "$parent/$subpath" -mindepth 1 -maxdepth 1 -type d -name "repodata" | sort)
-    for repo in $rpms; do
-        echo "==> $repo"
-        get_checksum "$repo"
+    for rpm_repo in $rpms; do
+        echo "==> $rpm_repo"
+        get_checksum "$rpm_repo"
     done
 }
 
-compare_md5sum() {
-    [[ -d "$1" ]] || err "USAGE: compare_md5sum() <dir1> [dir2] [subpath] [format]"
-    [[ -d "$2" ]] || err "USAGE: compare_md5sum() [dir1] <dir2> [subpath] [format]"
-    [[ -n "$3" ]] || err "USAGE: compare_md5sum() [dir1] [dir2] <subpath> [format]"
-    [[ -n "$4" ]] || err "USAGE: compare_md5sum() [dir1] [dir2] [subpath] <format>"
+compare_rpm_md5sum() {
+    [[ -d "$1" ]] || err "USAGE: compare_rpm_md5sum() <dir1> [dir2] [subpath]"
+    [[ -d "$2" ]] || err "USAGE: compare_rpm_md5sum() [dir1] <dir2> [subpath]"
+    [[ -n "$3" ]] || err "USAGE: compare_rpm_md5sum() [dir1] [dir2] <subpath>"
 
-    if [[ "$4" == "rpm" ]]; then
-        file1=$(rpm_md5sum "$1" "$3")
-        file2=$(rpm_md5sum "$2" "$3")
-    else
-        echo "WARNING: unknown package format: $4"
-        return 1
-    fi
+    file1=$(rpm_md5sum "$1" "$3")
+    file2=$(rpm_md5sum "$2" "$3")
 
     echo "$file1"
     echo "---"
@@ -76,16 +74,59 @@ compare_md5sum() {
     two_way=$(comm -1 -3 <(echo "$file1" | sort) <(echo "$file2" | sort) | grep -v "^==>" | sort -k2)
     echo "$two_way"
 
-    # Needed to flush CDN cache
     for line in $(echo "$two_way" | awk '{print $2}'); do
-        if [[ "$4" == "rpm" ]]; then
-            echo "${subpath}/repodata/${line}" >> "$fileManifest"
-        fi
+        echo "${subpath}/repodata/${line}" >> "$fileManifest"
     done
 
     diff_count=$(echo "$two_way" | wc -l)
     [[ $diff_count -gt 1 ]] || err "metadata unchanged"
     echo ":: $diff_count metadata file(s) added or modified"
+}
+
+check_modular() {
+    local distro="$1"
+    local distnum=$(echo "$distro" | tr -dc '0-9\n')
+
+    if [[ "$distro" =~ "rhel" ]] && [[ "$distnum" -ge 8 ]]; then
+        modular=1
+    elif [[ "$distro" =~ "fedora" ]] && [[ "$distnum" -ge 28 ]]; then
+        modular=1
+    else
+        return 0
+    fi
+
+    if [[ -f "$genmodulesLOCAL" ]]; then
+        genmodules="$genmodulesLOCAL"
+    elif [[ -n "$genmodulesPATH" ]]; then
+        genmodules="$genmodulesPATH"
+    elif [[ -z "$remoteModules" ]] && [[ -z "$localModules" ]]; then
+        echo
+        echo ":: Skipping modularity, no $moduleName packages found"
+        echo
+    elif [[ -n "$moduleName" ]]; then
+        echo
+        echo ">>> [$moduleName] modularity"
+        echo "NOTICE: fetch genmodules.py script from https://github.com/NVIDIA/yum-packaging-precompiled-kmod"
+        err "unable to locate 'genmodules.py' in $current or \$PATH"
+    fi
+}
+
+rpm_modularity() {
+    # Driver streams expect driver packages present
+    if [[ -n "$remoteModules" ]] || [[ -n "$localModules" ]]; then
+        echo "%%%%%%%%%%%%%%%%%%"
+        echo "%%% Modularity %%%"
+        echo "%%%%%%%%%%%%%%%%%%"
+
+        echo ">>> python3 $genmodules $PWD modules.yaml"
+        python3 $genmodules "$PWD" modules.yaml || err "./genmodules.py $PWD modules.yaml"
+        [[ -f "modules.yaml" ]] || err "modules.yaml not found at $PWD"
+        echo
+
+        echo ">>> modifyrepo_c modules.yaml $PWD/repodata"
+        modifyrepo_c modules.yaml $PWD/repodata || err "modifyrepo_c modules.yaml $PWD/repodata"
+        echo
+    fi
 }
 
 rpm_metadata() {
@@ -96,54 +137,36 @@ rpm_metadata() {
     oldPWD="$PWD"
 
     cd "$parent"/"$subpath" || err "unable to cd to $parent / $subpath"
-    #echo ":: Cache hit saves ~20 minutes using --update-md-path <dir> and --update flags"
 
     #FIXME WAR for overlayFS invalid cross-device link
-    echo ":: WAR for overlayFS invalid cross-device link"
-    mkdir old
-    echo ">>> mv repodata old/repodata"
-    mv repodata old/repodata
+    [[ -d repodata ]] &&
+    mkdir old &&
+    mv repodata old
 
     #
-    # NOTE this saves about 20 minutes!
-    # --update-md-path <dir> and --update flags
-    echo ">>> createrepo_c -v --outputdir old --update --database $PWD"
-    createrepo_c -v --update-md-path old --update --database "$PWD" 2>&1 | tee "$createrepoLog"
+    # Process new or modified RPM packages
+    #
+    echo ">>> createrepo_c -v --database --update --update-md-path $PWD/old $PWD"
+    createrepo_c -v --database --update --update-md-path $PWD/old "$PWD" 2>&1 | tee "$logFile"
     [[ ${PIPESTATUS[0]} -eq 0 ]] || err "createrepo_c failed"
     echo
 
-    # Needed to flush CDN cache
-    pkg_cache=$(cat "$createrepoLog" 2>/dev/null | grep "CACHE HIT" | awk '{print $NF}')
-    pkg_modify=$(cat "$createrepoLog" 2>/dev/null | grep "metadata are obsolete" | awk '{print $2}')
+    pkg_cache=$(cat "$logFile" 2>/dev/null | grep "CACHE HIT" | awk '{print $NF}')
+    pkg_modify=$(cat "$logFile" 2>/dev/null | grep "metadata are obsolete" | awk '{print $2}')
     pkg_list=$(find "$PWD" -maxdepth 1 -type f -name "*.rpm" 2>/dev/null | awk -F '/' '{print $NF}')
     pkg_diff=$(comm -1 -3 <(echo "$pkg_cache" | sort) <(echo "$pkg_list" | sort))
     for pkg in $(echo -e "${pkg_diff}\n${pkg_modify}" | sort -u); do
         echo ":: ${subpath}/${pkg}"
         echo "${subpath}/${pkg}" >> "$fileManifest"
     done
-    rm "$createrepoLog"
     echo
 
     # Modularity
-    if [[ "$2" =~ "rhel8" ]] || [[ "$2" =~ fedora[3-9] ]]; then
-        # Driver streams expect driver packages present
-        if [[ -n "$mirrorDriver" ]] || [[ -n "$pathDriver" ]]; then
-            echo "%%%%%%%%%%%%%%%%%%"
-            echo "%%% Modularity %%%"
-            echo "%%%%%%%%%%%%%%%%%%"
-
-            echo ">>> python3 $genmodulespy $PWD modules.yaml"
-            python3 $genmodulespy "$PWD" modules.yaml || err "./genmodules.py $PWD modules.yaml"
-            [[ -f "modules.yaml" ]] || err "modules.yaml not found at $PWD"
-            echo
-
-            echo ">>> modifyrepo_c modules.yaml $PWD/repodata"
-            modifyrepo_c modules.yaml $PWD/repodata || err "modifyrepo_c modules.yaml $PWD/repodata"
-            echo
-        fi
+    if [[ -n "$modular" ]]; then
+        rpm_modularity
     fi
 
-    echo ":: Sanity check for repomd.xml"
+    echo "==> Sanity check for repomd.xml"
     compare_file "$parent" "$subpath" "$repomd" && err "expected new metadata"
     echo
 
@@ -165,13 +188,63 @@ rpm_metadata() {
     cd "$oldPWD" >/dev/null
     echo
 
-    compare_md5sum "$donor" "$mountDir" "$subpath" "rpm"
+    compare_rpm_md5sum "$donor" "$inputDir" "$subpath"
     echo
 }
 
-[[ -f "$genmodulespy" ]] || err "genmodules.py not found at $genmodulespy"
-mirrorDriver=$(ls ${mirror}/${subpath}/nvidia-driver* 2>/dev/null | awk NR==1)
-pathDriver=$(ls ${forpath}/nvidia-driver* 2>/dev/null | awk NR==1)
 
-rm -f "$createrepoLog"
-rpm_metadata "$mirror" "$mountDir" "$subpath"
+# Options
+while [[ $1 =~ ^-- ]]; do
+    # Repository relative path
+    if [[ $1 =~ "repo=" ]]; then
+        subpath=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--repo$ ]]; then
+        shift; subpath="$1"
+    # Scratch directory
+    elif [[ $1 =~ "workdir=" ]]; then
+        workDir=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--workdir$ ]]; then
+        shift; workDir="$1"
+    # Source of truth
+    elif [[ $1 =~ "mirror=" ]]; then
+        mirror=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--mirror$ ]]; then
+        shift; mirror="$1"
+    # Release candidate
+    elif [[ $1 =~ "input=" ]]; then
+        inputDir=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--input$ ]]; then
+        shift; inputDir="$1"
+    # Signing key name
+    elif [[ $1 =~ "gpg=" ]] || [[ $1 =~ "gpgkey=" ]]; then
+        gpgkeyName=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--gpg$ ]] || [[ $1 =~ ^--gpgkey$ ]]; then
+        shift; gpgkeyName="$1"
+    fi
+    shift
+done
+
+
+[[ -d "$inputDir" ]] || usage "Must specify --input directory (read-write)"
+[[ -d "$mirror" ]]   || usage "Must specify --mirror directory (read-only)"
+[[ -n "$subpath" ]]  || usage "Must specify --repo relative subdirectory (\$distro/\$arch)"
+
+# Set default signing key
+[[ -n "$gpgkeyName" ]] || gpgkeyName="$publicKey"
+
+# Temp files
+[[ -n "$workDir" ]] || workDir=$(mktemp -d)
+[[ -d "$workDir" ]] || mkdir -p "$workDir"
+fileManifest="${workDir}/manifest.list"
+logFile="${workDir}/createrepo.log"
+rm -f -- "$logFile"
+
+# Detect modularity
+localModules=$(ls ${inputDir}/${subpath}/${moduleName}* 2>/dev/null | awk NR==1)
+remoteModules=$(ls ${mirror}/${subpath}/${moduleName}* 2>/dev/null | awk NR==1)
+check_modular "$subpath"
+
+# Update RPM metadata
+rpm_metadata "$mirror" "$inputDir" "$subpath"
+
+### END ###
