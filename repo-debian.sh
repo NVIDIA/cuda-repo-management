@@ -17,7 +17,7 @@ usage() {
     echo -e "  --repo=<subdirectory>\t \$distro/\$arch to traverse"
     echo
     echo " OPTIONAL:"
-    echo -e "  --nocache\t rebuild metadata"
+    echo -e "  --nocache\t\t rebuild metadata"
     echo -e "  --gpgkey=<name>\t shortname for GPG signing keypair"
     echo -e "  --workdir=<directory>\t scratch area for temp files"
     echo
@@ -47,7 +47,7 @@ deb_md5sum() {
     local parent="$1"
     local subpath="$2"
 
-    debs=$(find "$parent/$subpath" -mindepth 1 -maxdepth 1 -type f \( -not -name "*.deb" \) | sort)
+    debs=$(find "$parent/$subpath" -mindepth 1 -maxdepth 1 -type f \( -not -name "*.deb" \) 2>/dev/null | sort)
     echo "==> $parent/$subpath"
     if [[ -n "$debs" ]]; then
         md5sum $debs | sed 's|\/| |g' | awk '{print $1,$NF}' | sort -k2
@@ -258,7 +258,11 @@ deb_metadata() {
     echo
 
     echo "==> Sanity check for Release"
-    compare_file "$parent" "$subpath" "Release" && err "expected new metadata"
+    if [[ -f "$mirror/$subpath/Release" ]]; then
+        compare_file "$parent" "$subpath" "Release" && err "expected new metadata"
+    else
+        echo " :: Old repo not found"
+    fi
     echo
 
     # Sign checksum file with key

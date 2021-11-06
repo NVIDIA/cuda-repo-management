@@ -8,7 +8,7 @@ debianMetadata="${current}/repo-debian.sh"
 rpmMetadata="${current}/repo-rpm.sh"
 
 outputDir="$PWD/new"
-workDir="$PWD"
+tempDir="$PWD"
 imgSize="2048" # 2 GiB
 optimize=1     # try to reduce image size
 
@@ -21,6 +21,7 @@ clean_up() {
     [[ -f "$onetimeFS" ]] && rm "$onetimeFS"
     [[ -d "$mountDir" ]] && rmdir "$mountDir"
     [[ -d "$scratch" ]] && rm -rf "$scratch"
+    [[ -d "$tempDir/tmp" ]] && rmdir "$tempDir/tmp"
 }
 
 trap ctrl_c INT
@@ -46,9 +47,11 @@ usage() {
     echo " OPTIONS:"
     echo -e "  --filter=<repo>\t limit to select distro/arch repo(s)\t\t\t ${filter[*]}"
     echo -e "  --output=<directory>\t the save location\t\t\t\t $outputDir"
-    echo -e "  --workdir=<directory>\t scratch area for temp files\t\t\t $workDir"
+    echo -e "  --tempdir=<directory>\t scratch area for temporary files\t\t $tempDir"
     echo -e "  --size=<megabytes>\t image file size for overlay\t\t\t (default: $imgSize)"
     echo -e "  --keep-new\t\t save the new files\t\t\t\t $savepkgs"
+    echo -e "  --no-cache\t\t do not use mirror as base\t\t\t\t $nocache"
+    echo -e "  --debug\t\t verbose output\t\t $debug"
     echo -e "  --clean\t\t un-mount stale overlayFS mountpoints\t\t $clean"
     echo
 
@@ -83,10 +86,17 @@ preflight_checks() {
     userGroup=$(ls --color=none -ld $PWD 2>/dev/null | awk '{print $3":"$4}')
 
     # Cleanup previous runs
-    mkdir -p "$tempDir"
-    cd "$tempDir" >/dev/null || err "unable to cd to $tempDir"
     rm -f -- "$fileManifest"
     clean_up
+
+    # Create scratch area
+    mkdir -p "$tempDir/tmp"
+    cd "$tempDir/tmp" >/dev/null || err "unable to cd to $tempDir/tmp"
+
+    # Pass-through
+    if [[ -n $nocache ]]; then
+        passthrough+=" --nocache "
+    fi
 }
 
 package_metadata() {
@@ -109,13 +119,13 @@ package_metadata() {
             echo "==> skipping repo: $subpath"
         elif [[ -n "$rpmFormat" ]]; then
             unset rpmFormat
-            echo "==> rpm_metadata --input $mountDir --mirror $mirror --repo $subpath"
-            time $rpmMetadata --input "$mountDir" --mirror "$mirror" --repo "$subpath"
+            echo "==> rpm_metadata $passthrough --input $mountDir --mirror $mirror --repo $subpath"
+            time $rpmMetadata $passthrough --input "$mountDir" --mirror "$mirror" --repo "$subpath"
             echo
         elif [[ -n "$debFormat" ]]; then
             unset debFormat
-            echo "==> deb_metadata --input $mountDir --mirror $mirror --repo $subpath"
-            time $debianMetadata --input "$mountDir" --mirror "$mirror" --repo "$subpath"
+            echo "==> deb_metadata $passthrough --input $mountDir --mirror $mirror --repo $subpath"
+            time $debianMetadata $passthrough --input "$mountDir" --mirror "$mirror" --repo "$subpath"
             echo
         else
             echo "==> skipping unimplemented format: $subpath"
@@ -224,10 +234,10 @@ while [[ $1 =~ ^-- ]]; do
     elif [[ "$1" =~ ^--output$ ]]; then
         shift; outputDir="$1"
     # Scratch directory
-    elif [[ $1 =~ "workdir=" ]]; then
-        workDir=$(echo "$1" | awk -F "=" '{print $2}')
-    elif [[ $1 =~ ^--workdir$ ]]; then
-        shift; workDir="$1"
+    elif [[ $1 =~ "tempdir=" ]] || [[ $1 =~ "workdir=" ]]; then
+        tempDir=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--tempdir$ ]] || [[ $1 =~ ^--workdir$ ]]; then
+        shift; tempDir="$1"
     # Source of truth
     elif [[ $1 =~ "mirror=" ]]; then
         mirror=$(echo "$1" | awk -F "=" '{print $2}')
@@ -241,32 +251,53 @@ while [[ $1 =~ ^-- ]]; do
     # Save new packages
     elif [[ "$1" == "--keep-new" ]]; then
         savepkgs=1
+    # Do not use source of truth
+    elif [[ "$1" == "--no-cache" ]] || [[ "$1" == "--nocache" ]]; then
+        nocache=1
     # Clean overlayFS mount
     elif [[ "$1" == "--clean" ]]; then
         clean=1
+    # Verbose
+    elif [[ "$1" == "--debug" ]]; then
+        debug=1
     # Usage
     elif [[ "$1" == "--help" ]]; then
+        usage
+    else
+        echo -e "\nERROR: unknown parameter: $1\n"
         usage
     fi
     shift
 done
 
+
 ARGS=$(echo "$@" | sed 's| |\n\t\t\t\t\t\t\t\t\t |g')
-[[ -d $mirror ]] || usage "Must specify --mirror path to public snapshot"
-[[ -d $1 ]] || usage "Must specify at least one directory to overlay"
+fileManifest="${tempDir}/manifest.list"
+onetimeFS="${tempDir}/tmp/upper.img"
+scratch="${tempDir}/tmp/scratch"
+mountDir="${tempDir}/tmp/overlay"
 
-fileManifest="${workDir}/manifest.list"
-tempDir="${workDir}/tmp"
-onetimeFS="${tempDir}/upper.img"
-scratch="${tempDir}/scratch"
-mountDir="${tempDir}/overlay"
+if [[ -n $debug ]]; then
+    echo "temp: $tempDir"
+    echo "mirror: $mirror"
+    echo "input dirs: $ARGS"
+    echo "output: $outputDir"
+fi
 
-if [[ $clean ]]; then
+if [[ -n $clean ]]; then
     clean_up
     exit 0
-else
-    preflight_checks "$1"
 fi
+
+if [[ -n $nocache ]]; then
+    mkdir -p "$tempDir/empty"
+    mirror="$tempDir/empty"
+fi
+
+# Sanity checks
+[[ -d $mirror ]] || usage "Must specify --mirror path to public snapshot"
+[[ -d $1 ]] || usage "Must specify at least one directory to overlay"
+preflight_checks "$1"
 
 # Prepare overlayFS parameters
 unset layers
@@ -278,6 +309,7 @@ for i in $@; do
     shift
 done
 layers+="$mirror"
+
 
 # Sanity
 if [[ -z $active ]]; then
@@ -308,5 +340,7 @@ save_new_metadata
 
 # Remove temp files
 clean_up
-[[ -d "$tempDir" ]] &&
-rmdir "$tempDir"
+[[ -d "$tempDir/empty" ]] &&
+rmdir "$tempDir/empty"
+
+### END ###

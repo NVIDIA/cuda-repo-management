@@ -51,7 +51,7 @@ rpm_md5sum() {
     local parent="$1"
     local subpath="$2"
 
-    rpms=$(find "$parent/$subpath" -mindepth 1 -maxdepth 1 -type d -name "repodata" | sort)
+    rpms=$(find "$parent/$subpath" -mindepth 1 -maxdepth 1 -type d -name "repodata" 2>/dev/null | sort)
     for rpm_repo in $rpms; do
         echo "==> $rpm_repo"
         get_checksum "$rpm_repo"
@@ -167,7 +167,11 @@ rpm_metadata() {
     fi
 
     echo "==> Sanity check for repomd.xml"
-    compare_file "$parent" "$subpath" "$repomd" && err "expected new metadata"
+    if [[ -f $mirror/$subpath/$repomd ]]; then
+        compare_file "$parent" "$subpath" "$repomd" && err "expected new metadata"
+    else
+        echo " :: Old repo not found"
+    fi
     echo
 
     echo ">>> gpg --batch --yes -a -u ${gpgkeyName} --detach-sign --personal-digest-preferences SHA512 $repomd"
