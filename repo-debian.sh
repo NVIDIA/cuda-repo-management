@@ -48,8 +48,8 @@ deb_md5sum() {
     local subpath="$2"
 
     debs=$(find "$parent/$subpath" -mindepth 1 -maxdepth 1 -type f \( -not -name "*.deb" \) 2>/dev/null | sort)
-    echo "==> $parent/$subpath"
     if [[ -n "$debs" ]]; then
+        echo "==> $parent/$subpath"
         md5sum $debs | sed 's|\/| |g' | awk '{print $1,$NF}' | sort -k2
     fi
 }
@@ -178,7 +178,7 @@ deb_metadata() {
     fi
 
 
-    pkg_count=$(echo "$deb_packages" | wc -l)
+    pkg_count=$(echo "$deb_packages" | grep -v ^$ | wc -l)
     [[ $pkg_count -gt 0 ]] || err "no new packages"
     echo ">>> deb_pkg_info($pkg_count)"
     cd "${inputDir}/${subpath}" || err "unable to cd to $inputDir / $subpath"

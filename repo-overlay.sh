@@ -101,7 +101,8 @@ preflight_checks() {
 
 package_metadata() {
     echo ":: Generate repo metadata"
-    repos=$(find ${active[@]} -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort -r)
+    repos=$(find ${active[@]} -mindepth 2 -maxdepth 2 -type d 2>/dev/null | rev | sed -e 's|/|\t|' -e 's|/|\t|' | rev | sort -k2,3 -r | uniq -f1 | sed 's|\t|/|g')
+    echo $repos
     for path in $repos; do
         unset subpath mirrorDriver pathDriver skipNext
         subpath=$(echo $path | awk -F "/" '{print $(NF-1)"/"$(NF)}')
@@ -240,9 +241,9 @@ while [[ $1 =~ ^-- ]]; do
         shift; tempDir="$1"
     # Source of truth
     elif [[ $1 =~ "mirror=" ]]; then
-        mirror=$(echo "$1" | awk -F "=" '{print $2}')
+        mirror=$(readlink -m $(echo "$1" | awk -F "=" '{print $2}'))
     elif [[ $1 =~ ^--mirror$ ]]; then
-        shift; mirror="$1"
+        shift; mirror=$(readlink -m "$1")
     # Specify image size
     elif [[ "$1" =~ "--size=" ]]; then
         customSize=$(echo "$1" | awk -F '=' '{print $2}')
@@ -280,7 +281,7 @@ mountDir="${tempDir}/tmp/overlay"
 if [[ -n $debug ]]; then
     echo "temp: $tempDir"
     echo "mirror: $mirror"
-    echo "input dirs: $ARGS"
+    echo "input dirs: $@"
     echo "output: $outputDir"
 fi
 
@@ -294,15 +295,10 @@ if [[ -n $nocache ]]; then
     mirror="$tempDir/empty"
 fi
 
-# Sanity checks
-[[ -d $mirror ]] || usage "Must specify --mirror path to public snapshot"
-[[ -d $1 ]] || usage "Must specify at least one directory to overlay"
-preflight_checks "$1"
-
 # Prepare overlayFS parameters
 unset layers
 for i in $@; do
-    dir=$(readlink -e "$i")
+    dir=$(readlink -m "$i")
     [[ -d "$dir" ]] &&
     layers+="${dir}:" &&
     active+=("$dir")
@@ -310,6 +306,10 @@ for i in $@; do
 done
 layers+="$mirror"
 
+# Sanity checks
+[[ -d $mirror ]] || usage "Must specify --mirror path to public snapshot"
+[[ -d $dir ]] || usage "Must specify at least one directory to overlay"
+preflight_checks "$1"
 
 # Sanity
 if [[ -z $active ]]; then

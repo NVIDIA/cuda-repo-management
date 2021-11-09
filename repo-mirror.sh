@@ -118,13 +118,16 @@ copy_other()
 {
     indexHTML=$(curl -sL "${baseURL}/${distro}/${arch}/index.html")
     echo "==> Parsing index"
-    miscFiles=$(echo "$indexHTML" | sed 's|><|>\n<|g' | grep "<a href" | awk -F "'" '{print $2}' | grep -v -e "\.\." -e "/$" -e "\.deb$" -e "\.rpm$")
+    linkTags=$(echo "$indexHTML" | sed 's|><|>\n<|g' | grep "<a href" | awk -F "'" '{print $2}' | grep -v -e "\.\." -e "/$")
+    miscFiles=$(echo "$linkTags" | grep -v -e "\.deb$" -e "\.rpm$" | grep -E "$matching")
 
-    if [[ -z "$miscFiles" ]]; then
-        err "Unable to locate misc files in repository for ${distro}/${arch}"
+    if [[ -n "$metaFiles" ]] && [[ -n "$miscFiles" ]]; then
+        download_files $metaFiles $miscFiles
+    elif [[ -n "$metaFiles" ]]; then
+        download_files $metaFiles
+    elif [[ -n "$miscFiles" ]]; then
+        download_files $miscFiles
     fi
-
-    download_files $metaFiles $miscFiles
 }
 
 
