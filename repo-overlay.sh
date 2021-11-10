@@ -165,7 +165,7 @@ min_tempsize() {
     fi
 
     echo ":: Optimal scratch size: ${repoSum}M -> ${powerTwo}M"
-    imgSize="$powerTwo"
+    imgSize=$((powerTwo + repoSum))
 }
 
 mount_tempfs() {
@@ -247,8 +247,10 @@ while [[ $1 =~ ^-- ]]; do
     # Specify image size
     elif [[ "$1" =~ "--size=" ]]; then
         customSize=$(echo "$1" | awk -F '=' '{print $2}')
+        imgSize="$customSize"
     elif [[ "$1" =~ --size$ ]]; then
         shift; customSize="$1"
+        imgSize="$customSize"
     # Save new packages
     elif [[ "$1" == "--keep-new" ]]; then
         savepkgs=1
