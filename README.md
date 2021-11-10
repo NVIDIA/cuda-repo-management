@@ -6,8 +6,11 @@
 
 Scripts for managing Debian and RPM package repositories containing many files.
 
-
 See [concept](#concept) and [metadata](#metadata) sections below.
+
+#### PackagingCon
+Hi, PackagingCon attendees! Check back [here](#packagingcon) later for a link to the slides.
+
 
 ## Table of Contents
 
