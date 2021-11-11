@@ -6,10 +6,7 @@
 
 Scripts for managing Debian and RPM package repositories containing many files.
 
-See [concept](#concept) and [metadata](#metadata) sections below.
-
-#### PackagingCon
-Hi, PackagingCon attendees! Check back [here](#packagingcon) later for a link to the slides.
+See [concept](#concept), [metadata](#metadata), and [presentations](#presentations) sections below.
 
 
 ## Table of Contents
@@ -32,6 +29,8 @@ Hi, PackagingCon attendees! Check back [here](#packagingcon) later for a link to
 - [Metadata](#metadata)
   * [Debian](#debian)
   * [RPM](#rpm)
+- [Presentations](#presentations)
+  * [PackagingCon](#packagingcon)
 - [Related](#related)
   * [Precompiled kmod](https://github.com/NVIDIA/yum-packaging-precompiled-kmod)
   * [Tarball and Zip Deliverables](https://github.com/NVIDIA/build-system-archive-import-examples)
@@ -88,7 +87,9 @@ This repo contains scripts to generate repository metadata for **Debian** and **
 
 ## Demo
 
-- Coming soon
+![Demo](https://developer.download.nvidia.com/compute/github-demos/cuda-repo-management/demo.gif)
+
+[![asciinema](https://img.shields.io/badge/Play%20Video-asciinema-red)](https://developer.download.nvidia.com/compute/github-demos/cuda-repo-management/demo-ascii/)
 
 
 ## Prerequisites
@@ -378,6 +379,17 @@ data:
     name: $module
     stream: $streamB
 ```
+
+
+## Presentations
+
+#### PackagingCon
+  > Hi, [PackagingCon](https://packaging-con.org/) attendees! Thank you very much, grateful for the opportunity to participate, please keep in touch :smile:
+
+- [Repository Management](https://pretalx.com/packagingcon-2021/talk/88VTJZ/)
+  - 2021 (1st year)
+  - [video](https://developer.download.nvidia.com/presentations/2021/packagingcon/Repository_Management_PackagingCon.mp4) (MP4)
+  - [slides](https://developer.download.nvidia.com/presentations/2021/packagingcon/Repository_Management_PackagingCon.pdf) (PDF)
 
 
 ## Related
