@@ -100,7 +100,7 @@ copy_debs()
 copy_rpms()
 {
     repoMD=$(curl -sL "${baseURL}/${distro}/${arch}/repodata/repomd.xml")
-    metaFiles=$(echo "$repoMD" | grep "href=" | awk -F '"' '{print $2}')
+    metaFiles=$(echo "$repoMD" | grep "href=" | awk -F '"' '{print $2}' | sed '1irepodata/repomd.xml')
     gzipPath=$(echo "$metaFiles" | grep primary\.xml)
 
     echo "==> Parsing $gzipPath"
