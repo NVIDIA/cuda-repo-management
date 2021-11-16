@@ -22,6 +22,7 @@ usage() {
     echo -e "  --repo=<subdirectory>\t \$distro/\$arch to traverse"
     echo
     echo " OPTIONAL:"
+    echo -e "  --nocache\t\t rebuild metadata"
     echo -e "  --gpgkey=<name>\t shortname for GPG signing keypair"
     echo -e "  --workdir=<directory>\t scratch area for temp files"
     echo
@@ -146,9 +147,18 @@ rpm_metadata() {
     #
     # Process new or modified RPM packages
     #
-    echo ">>> createrepo_c -v --database --update --update-md-path $PWD/old $PWD"
-    createrepo_c -v --database --update --update-md-path $PWD/old "$PWD" 2>&1 | tee "$logFile"
-    [[ ${PIPESTATUS[0]} -eq 0 ]] || err "createrepo_c failed"
+    if [[ -z "$nocache" ]]; then
+        echo ">>> createrepo_c -v --database --update --update-md-path $PWD/old $PWD"
+        createrepo_c -v --database --update --update-md-path $PWD/old "$PWD" 2>&1 | tee "$logFile"
+        [[ ${PIPESTATUS[0]} -eq 0 ]] || err "createrepo_c failed"
+    #
+    # Process all RPM packages
+    #
+    else
+        echo ">>> createrepo_c -v --database $PWD"
+        createrepo_c -v --database "$PWD" 2>&1 | tee "$logFile"
+        [[ ${PIPESTATUS[0]} -eq 0 ]] || err "createrepo_c failed"
+    fi
     echo
 
     pkg_cache=$(cat "$logFile" 2>/dev/null | grep "CACHE HIT" | awk '{print $NF}')
@@ -199,8 +209,11 @@ rpm_metadata() {
 
 # Options
 while [[ $1 =~ ^-- ]]; do
+    # Full rebuild of metadata
+    if [[ $1 =~ ^--nocache$ ]] || [[ $1 =~ ^--no-cache$ ]]; then
+        nocache=1
     # Repository relative path
-    if [[ $1 =~ "repo=" ]]; then
+    elif [[ $1 =~ "repo=" ]]; then
         subpath=$(echo "$1" | awk -F "=" '{print $2}')
     elif [[ $1 =~ ^--repo$ ]]; then
         shift; subpath="$1"
