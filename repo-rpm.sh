@@ -113,19 +113,20 @@ check_modular() {
 }
 
 rpm_modularity() {
+    local rpmdir="$1"
     # Driver streams expect driver packages present
     if [[ -n "$remoteModules" ]] || [[ -n "$localModules" ]]; then
         echo "%%%%%%%%%%%%%%%%%%"
         echo "%%% Modularity %%%"
         echo "%%%%%%%%%%%%%%%%%%"
 
-        echo ">>> python3 $genmodules $PWD modules.yaml"
-        python3 $genmodules "$PWD" modules.yaml || err "./genmodules.py $PWD modules.yaml"
-        [[ -f "modules.yaml" ]] || err "modules.yaml not found at $PWD"
+        echo ">>> python3 $genmodules $PWD $rpmdir/modules.yaml"
+        python3 $genmodules "$PWD" ${rpmdir}/modules.yaml || err "./genmodules.py $PWD $rpmdir/modules.yaml"
+        [[ -f "${rpmdir}/modules.yaml" ]] || err "modules.yaml not found at $rpmdir"
         echo
 
-        echo ">>> modifyrepo_c modules.yaml $PWD/repodata"
-        modifyrepo_c modules.yaml $PWD/repodata || err "modifyrepo_c modules.yaml $PWD/repodata"
+        echo ">>> modifyrepo_c modules.yaml $rpmdir/repodata"
+        modifyrepo_c ${rpmdir}/modules.yaml $rpmdir/repodata || err "modifyrepo_c ${rpmdir}/modules.yaml ${rpmdir}/repodata"
         echo
     fi
 }
@@ -148,17 +149,17 @@ rpm_metadata() {
     # Process new or modified RPM packages
     #
     if [[ -z "$nocache" ]]; then
-        echo ">>> createrepo_c -v --database --update --update-md-path $PWD/old $PWD"
-        createrepo_c -v --database --update --update-md-path $PWD/old "$PWD" 2>&1 | tee "$logFile"
-        [[ ${PIPESTATUS[0]} -eq 0 ]] || err "createrepo_c failed"
+        repoArgs="--update --update-md-path $PWD/old"
     #
     # Process all RPM packages
     #
     else
-        echo ">>> createrepo_c -v --database $PWD"
-        createrepo_c -v --database "$PWD" 2>&1 | tee "$logFile"
-        [[ ${PIPESTATUS[0]} -eq 0 ]] || err "createrepo_c failed"
+        unset repoArgs
     fi
+
+    echo ">>> createrepo_c -v --database $repoArgs $PWD"
+    createrepo_c -v --database $repoArgs "$PWD" 2>&1 | tee "$logFile"
+    [[ ${PIPESTATUS[0]} -eq 0 ]] || err "createrepo_c failed"
     echo
 
     pkg_cache=$(cat "$logFile" 2>/dev/null | grep "CACHE HIT" | awk '{print $NF}')
@@ -173,11 +174,11 @@ rpm_metadata() {
 
     # Modularity
     if [[ -n "$modular" ]]; then
-        rpm_modularity
+        rpm_modularity "$PWD"
     fi
 
     echo "==> Sanity check for repomd.xml"
-    if [[ -f $mirror/$subpath/$repomd ]]; then
+    if [[ -n "$mirror" ]] && [[ -f $mirror/$subpath/$repomd ]]; then
         compare_file "$parent" "$subpath" "$repomd" && err "expected new metadata"
     else
         echo " :: Old repo not found"
@@ -202,7 +203,9 @@ rpm_metadata() {
     cd "$oldPWD" >/dev/null
     echo
 
-    compare_rpm_md5sum "$donor" "$inputDir" "$subpath"
+    if [[ -d "$donor" ]]; then
+        compare_rpm_md5sum "$donor" "$inputDir" "$subpath"
+    fi
     echo
 }
 
@@ -243,8 +246,15 @@ done
 
 
 [[ -d "$inputDir" ]] || usage "Must specify --input directory (read-write)"
-[[ -d "$mirror" ]]   || usage "Must specify --mirror directory (read-only)"
-[[ -n "$subpath" ]]  || usage "Must specify --repo relative subdirectory (\$distro/\$arch)"
+
+# Allow --repo parameter to be optional
+if [[ -z "$subpath" ]]; then
+    nestPath=$(basename "$inputDir" 2>/dev/null)
+    inputDir=$(dirname "$inputDir" 2>/dev/null)
+    basePath=$(basename "$inputDir" 2>/dev/null)
+    inputDir=$(dirname "$inputDir" 2>/dev/null)
+    subpath="${basePath}/${nestPath}"
+fi
 
 # Set default signing key
 [[ -n "$gpgkeyName" ]] || gpgkeyName="$publicKey"
