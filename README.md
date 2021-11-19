@@ -18,7 +18,8 @@ See [concept](#concept), [metadata](#metadata), and [presentations](#presentatio
   * [repo-overlay](#repo-overlay)
   * [repo-debian](#repo-debian)
   * [repo-rpm](#repo-rpm)
-  * [repo-mirror](#repo-rpm)
+  * [repo-mirror](#repo-mirror)
+  * [repo-validate](#repo-validate)
 - [Prerequisites](#prerequisites)
   * [Clone this git repository](#clone-this-git-repository)
   * [(Optional) fetch genmodules](#optional-fetch-genmodules)
@@ -156,6 +157,14 @@ Download Debian or RPM packages from an existing repository
 ```shell
 ./repo-mirror.sh --distro=$distro --arch=$arch (--version=$version) (--url=$repository) (--dryrun)
 > ex: ./repo-mirror.sh --output=/data/snapshot --distro=sles15 --arch=x86_64
+```
+
+### repo-validate
+Verify that metadata matches RPM and Debian packages (filesize and SHA256 checksum)
+
+```shell
+./repo-validate.sh --mirror=path/to/snapshot (--distro=$distro) (--arch=$arch) (--dryrun)
+> ex: ./repo-validate.sh --mirror=/data/snapshot --distro=rhel8 --arch=x86_64
 ```
 
 
