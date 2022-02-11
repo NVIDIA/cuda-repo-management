@@ -7,6 +7,9 @@ outputDir="$HOME/mirror"
 baseURL="https://developer.download.nvidia.com/compute/cuda/repos"
 version=("")
 
+packages=1
+metadata=1
+directory=0
 
 err() { echo "ERROR: $*"; exit 1; }
 
@@ -19,6 +22,9 @@ usage() {
     echo
     echo " OPTIONAL:"
     echo -e "  --dryrun\t\t skip downloading files"
+    echo -e "  --follow\t\t also download files in subdirectories"
+    echo -e "  --metadata\t\t only download metadata files"
+    echo -e "  --packages\t\t only download package files"
     echo -e "  --output=<directory>\t save directory"
     echo -e "  --version=<11.4.2>\t filter results by string"
     echo -e "  --url=<name>\t\t override base URL to repository"
@@ -114,19 +120,37 @@ copy_rpms()
     download_files $packageFiles
 }
 
+copy_subdir()
+{
+    local folder=$1
+    dirHTML=$(curl -sL "${baseURL}/${distro}/${arch}/${folder}/index.html")
+    echo "==> Parsing $folder"
+    dirLinks=$(echo "$dirHTML" | sed 's|><|>\n<|g' | grep "<a href" | awk -F "'" '{print $2}' | grep -v -e "\.\.")
+    subFiles=$(echo "$dirLinks" | grep -v -e "/$" -e "\.deb$" -e "\.rpm$" | sed "s|^|${folder}|" | grep -v "^${folder}$" | grep -E "$matching")
+
+    if [[ -n "$subFiles" ]]; then
+        download_files $subFiles
+    else
+        download_files ${folder}/index.html
+    fi
+}
+
 copy_other()
 {
     indexHTML=$(curl -sL "${baseURL}/${distro}/${arch}/index.html")
     echo "==> Parsing index"
-    linkTags=$(echo "$indexHTML" | sed 's|><|>\n<|g' | grep "<a href" | awk -F "'" '{print $2}' | grep -v -e "\.\." -e "/$")
-    miscFiles=$(echo "$linkTags" | grep -v -e "\.deb$" -e "\.rpm$" | grep -E "$matching")
+    linkTags=$(echo "$indexHTML" | sed 's|><|>\n<|g' | grep "<a href" | awk -F "'" '{print $2}' | grep -v -e "\.\.")
+    miscFiles=$(echo "$linkTags" | grep -v -e "/$" -e "\.deb$" -e "\.rpm$" | grep -E "$matching")
+    subFolders=$(echo "$linkTags" | grep -e "/$" | grep "pre")
 
-    if [[ -n "$metaFiles" ]] && [[ -n "$miscFiles" ]]; then
+    if [[ -n "$metaFiles" ]] || [[ -n "$miscFiles" ]]; then
         download_files $metaFiles $miscFiles
-    elif [[ -n "$metaFiles" ]]; then
-        download_files $metaFiles
-    elif [[ -n "$miscFiles" ]]; then
-        download_files $miscFiles
+    fi
+
+    if [[ $directory == 1 ]]; then
+        for subDir in $subFolders; do
+            copy_subdir $subDir
+        done
     fi
 }
 
@@ -136,6 +160,17 @@ while [[ $1 =~ ^-- ]]; do
     # Do not download files
     if [[ $1 =~ "dryrun" ]] || [[ $1 =~ "dry-run" ]]; then
         dryrun=1
+    # Follow subdirectories
+    elif [[ $1 =~ "follow" ]]; then
+        directory=1
+    # Only metadata files
+    elif [[ $1 =~ "metadata" ]]; then
+        metadata=1
+        unset packages
+    # Only package files
+    elif [[ $1 =~ "packages" ]]; then
+        packages=1
+        unset metadata
     # Specify Linux distro
     elif [[ $1 =~ "distro=" ]]; then
         distro=$(echo "$1" | awk -F "=" '{print $2}')
@@ -187,11 +222,11 @@ fi
 
 # Do mirroring
 if [[ "$distro" =~ "fedora" ]] || [[ "$distro" =~ "rhel" ]] || [[ "$distro" =~ "sles" ]] || [[ "$distro" =~ "suse" ]]; then
-    copy_rpms
-    copy_other
+    [[ $packages == 1 ]] && copy_rpms
+    [[ $metadata == 1 ]] && copy_other
 elif [[ "$distro" =~ "debian" ]] || [[ "$distro" =~ "ubuntu" ]]; then
-    copy_debs
-    copy_other
+    [[ $packages == 1 ]] && copy_debs
+    [[ $metadata == 1 ]] && copy_other
 else
     err "Unsupported distro"
 fi
