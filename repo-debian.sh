@@ -21,7 +21,8 @@ usage() {
     echo -e "  --gpgkey=<name>\t shortname for GPG signing keypair"
     echo -e "  --workdir=<directory>\t scratch area for temp files"
     echo
-    err "$*"
+    [[ -n $1 ]] && err "$*"
+    [[ -z $1 ]] && exit 0
 }
 
 compare_file() {
@@ -266,16 +267,25 @@ deb_metadata() {
     echo
 
     # Sign checksum file with key
-    echo ">>> gpg -u ${gpgkeyName} --yes --armor --detach-sign --personal-digest-preferences SHA512 --output Release.gpg Release"
-    gpg -u ${gpgkeyName} --yes --armor --detach-sign --personal-digest-preferences SHA512 --output Release.gpg Release || err "gpg failed to detach signature"
-    [[ -f "Release.gpg" ]] || err "Release.gpg file not found"
-    echo ":: Release.gpg"
+    if [[ $gpgkeyName == "UNSIGNED" ]]; then
+        echo "==> Skipping signing (use external signing server)"
+    else
+        echo ">>> gpg -u ${gpgkeyName} --yes --armor --detach-sign --personal-digest-preferences SHA512 --output Release.gpg Release"
+        gpg -u ${gpgkeyName} --yes --armor --detach-sign --personal-digest-preferences SHA512 --output Release.gpg Release || err "gpg failed to detach signature"
+        [[ -f "Release.gpg" ]] || err "Release.gpg file not found"
+        echo ":: Release.gpg"
+        gpg -u ${gpgkeyName} --yes --clearsign --output InRelease Release || err "InRelease failed"
+        [[ -f "InRelease" ]] || err "InRelease file not found"
+        echo ":: InRelease"
+    fi
 
     cd "$oldPWD" >/dev/null
     echo
 
-    compare_debian_md5sum "$mirror" "$inputDir" "$subpath"
-    echo
+    if [[ -z "$nocache" ]]; then
+        compare_debian_md5sum "$mirror" "$inputDir" "$subpath"
+        echo
+    fi
 }
 
 
@@ -289,6 +299,16 @@ while [[ $1 =~ ^-- ]]; do
         subpath=$(echo "$1" | awk -F "=" '{print $2}')
     elif [[ $1 =~ ^--repo$ ]]; then
         shift; subpath="$1"
+    # Repository architecture
+    elif [[ $1 =~ "arch=" ]]; then
+        arch=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--arch$ ]]; then
+        shift; arch="$1"
+    # Repository distro name
+    elif [[ $1 =~ "distro=" ]]; then
+        distro=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--distro$ ]]; then
+        shift; distro="$1"
     # Scratch directory
     elif [[ $1 =~ "workdir=" ]]; then
         workDir=$(echo "$1" | awk -F "=" '{print $2}')
@@ -309,14 +329,16 @@ while [[ $1 =~ ^-- ]]; do
         gpgkeyName=$(echo "$1" | awk -F "=" '{print $2}')
     elif [[ $1 =~ ^--gpg$ ]] || [[ $1 =~ ^--gpgkey$ ]]; then
         shift; gpgkeyName="$1"
+    elif [[ $1 =~ ^--help$ ]]; then
+        usage
     fi
     shift
 done
 
 
 [[ -d "$inputDir" ]] || usage "Must specify --input directory (read-write)"
-[[ -d "$mirror" ]]   || usage "Must specify --mirror directory (read-only)"
-[[ -n "$subpath" ]]  || usage "Must specify --repo relative subdirectory (\$distro/\$arch)"
+[[ ! -d "$mirror" ]] && [[ -z $nocache ]] && usage "Must specify --mirror directory (read-only)"
+[[ -d "$mirror" ]] && [[ -z "$subpath" ]] && usage "Must specify --repo relative subdirectory (\$distro/\$arch)"
 
 # Set default signing key
 [[ -n "$gpgkeyName" ]] || gpgkeyName="$publicKey"

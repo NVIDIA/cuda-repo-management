@@ -185,11 +185,16 @@ rpm_metadata() {
     fi
     echo
 
-    echo ">>> gpg --batch --yes -a -u ${gpgkeyName} --detach-sign --personal-digest-preferences SHA512 $repomd"
-    gpg --batch --yes -a -u ${gpgkeyName} --detach-sign --personal-digest-preferences SHA512 "$repomd" || err "repomd.xml.asc failed"
-    echo ">>> gpg --batch --yes -a --export ${gpgkeyName} > ${repomd}.key"
-    gpg --batch --yes -a --export ${gpgkeyName} > ${repomd}.key || err "repomd.xml.key failed"
-    echo
+    # Sign checksum file with key
+    if [[ $gpgkeyName == "UNSIGNED" ]]; then
+        echo "==> Skipping signing (use external signing server)"
+    else
+        echo ">>> gpg --batch --yes -a -u ${gpgkeyName} --detach-sign --personal-digest-preferences SHA512 $repomd"
+        gpg --batch --yes -a -u ${gpgkeyName} --detach-sign --personal-digest-preferences SHA512 "$repomd" || err "repomd.xml.asc failed"
+        echo ">>> gpg --batch --yes -a --export ${gpgkeyName} > ${repomd}.key"
+        gpg --batch --yes -a --export ${gpgkeyName} > ${repomd}.key || err "repomd.xml.key failed"
+        echo
+    fi
 
     # Preserve old repodata
     if [[ -d "old/repodata" ]]; then
@@ -203,7 +208,7 @@ rpm_metadata() {
     cd "$oldPWD" >/dev/null
     echo
 
-    if [[ -d "$donor" ]]; then
+    if [[ -d "$donor" ]] && [[ -z $nocache ]]; then
         compare_rpm_md5sum "$donor" "$inputDir" "$subpath"
     fi
     echo
@@ -220,6 +225,16 @@ while [[ $1 =~ ^-- ]]; do
         subpath=$(echo "$1" | awk -F "=" '{print $2}')
     elif [[ $1 =~ ^--repo$ ]]; then
         shift; subpath="$1"
+    # Repository architecture
+    elif [[ $1 =~ "arch=" ]]; then
+        arch=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--arch$ ]]; then
+        shift; arch="$1"
+    # Repository distro name
+    elif [[ $1 =~ "distro=" ]]; then
+        distro=$(echo "$1" | awk -F "=" '{print $2}')
+    elif [[ $1 =~ ^--distro$ ]]; then
+        shift; distro="$1"
     # Scratch directory
     elif [[ $1 =~ "workdir=" ]]; then
         workDir=$(echo "$1" | awk -F "=" '{print $2}')

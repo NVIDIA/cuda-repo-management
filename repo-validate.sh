@@ -15,6 +15,7 @@ usage() {
     echo -e "  --mirror=<directory>\t\t input directory"
     echo
     echo " OPTIONAL:"
+    echo -e "  --remote=[URL]\t compare mirror with server packages"
     echo -e "  --distro=[rhel8,ubuntu2004]\t Linux distro name"
     echo -e "  --arch=[x86_64,ppc64le,sbsa]\t CPU architecture"
     echo -e "  --dryrun\t\t\t skip local files"
@@ -275,6 +276,64 @@ precheck_files()
     fi
 }
 
+#############################
+wrong_hash() {
+    local name=$1
+    local subd=$2
+    local path=$3
+    shift
+    shift
+    shift
+
+    echo "$@"
+
+    # Tracking
+    echo "$path" >> "$mismatched"
+}
+
+compare_remote() {
+    local file="$1"
+
+    [[ ! -f $candidate/$file ]] && echo "unable to locate $candidate/$file" && echo "$file" >> "$mismatched" && return
+    [[ ! -f $baseurl/$file ]] && echo "unable to locate $baseurl/$file" && echo "$file" >> "$mismatched" && return
+    emptyHash="d41d8cd98f00b204e9800998ecf8427e"
+    failedSSL="6497d03b7624d66a852d6809dee8dfc6"
+    origHash=$(md5sum $candidate/$file | awk '{print $1}')
+    serverHash=$(md5sum $baseurl/$file | awk '{print $1}')
+
+    echo "hash $file :: $origHash"
+
+    for mirror in ${mirrors[@]}; do
+        [[ "$origHash" == "$serverHash" ]]   || wrong_hash "$mirror" "$subpath" "$file" " - mismatch: candidate ($origHash) != server ($serverHash)"
+    done
+
+    for remote in ${remotes[@]}; do
+        publicHash=$(timeout 300 wget -q $remote/$subpath/$file -O - | md5sum | awk '{print $1}')
+        [[ "$serverHash" == "$publicHash" ]] || wrong_hash "$remote" "$subpath" "$file" " - mismatch: mirror ($serverHash) != server ($publicHash)"
+        [[ "$publicHash" == "$emptyHash" ]] && echo " - empty hash: $remote"
+        [[ "$publicHash" == "$failedSSL" ]] && echo " - bad SSL: $remote"
+    done
+}
+
+cdn_verification() {
+    local foo="$1"
+
+    contents=$(cat "$foo" 2>/dev/null)
+    echo ${indices[@]}
+    rm -f "$mismatched"
+
+    for file in $(echo ${contents}); do
+        compare_remote "$file"
+    done
+    echo
+
+    contents=$(cat "$mismatched" 2>/dev/null)
+    wrong=$(echo "$contents" | grep -v "^$" | wc -l)
+    echo ":: Found $wrong mismatched files"
+    echo
+}
+#############################
+
 validate_files()
 {
     local repotype="$1"
@@ -378,6 +437,12 @@ while [[ $1 =~ ^-- ]]; do
         metaDir=$(echo "$1" | awk -F "=" '{print $2}')
     elif [[ $1 =~ ^--metadata$ ]]; then
         shift; metaDir="$1"
+    # Remote server
+    elif [[ $1 =~ "remote=" ]]; then
+        remoteURL=$(echo "$1" | awk -F "=" '{print $2}' | grep "^http")
+        remotes+=("$remoteURL")
+    elif [[ $1 =~ ^--mirror$ ]]; then
+        shift; directory=$(readlink -m "$1")
     # Version array
     elif [[ $1 =~ "version=" ]]; then
         version+=("$(echo $1 | awk -F '=' '{print $2}')")
