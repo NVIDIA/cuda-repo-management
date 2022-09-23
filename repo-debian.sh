@@ -3,7 +3,7 @@
 # Copyright 2021, NVIDIA Corporation
 # SPDX-License-Identifier: MIT
 
-publicKey="7fa2af80" # set this to shortname for GPG keypair
+publicKey="3bf863cc" # set this to shortname for GPG keypair
 
 
 err() { echo "ERROR: $*"; exit 1; }
@@ -102,7 +102,7 @@ deb_pkg_info() {
     [[ -f "$1" ]] || err "deb_pkg_info() file $1 not found"
 
     # Calculate some values
-    pkg_size=$(du -b "$1" 2>/dev/null | awk '{print $1}')
+    pkg_size=$(du -L -b "$1" 2>/dev/null | awk '{print $1}')
     pkg_md5=$(md5sum "$1" 2>/dev/null | awk '{print $1}')
     pkg_sha1=$(sha1sum "$1" 2>/dev/null | awk '{print $1}')
     pkg_sha256=$(sha256sum "$1" 2>/dev/null | awk '{print $1}')
@@ -165,7 +165,7 @@ deb_metadata() {
         echo -n "..."
 
         # Calculate bytes from local DEB packages
-        bytes2=$(du -b -- *.deb | column -t | sort)
+        bytes2=$(du -L -b -- *.deb | column -t | sort)
         echo -n "..."
 
         # Skip unmodified packages
@@ -180,7 +180,7 @@ deb_metadata() {
 
 
     pkg_count=$(echo "$deb_packages" | grep -v ^$ | wc -l)
-    [[ $pkg_count -gt 0 ]] || err "no new packages"
+    [[ $pkg_count -gt 0 ]] || echo "WARNING: no new packages - intentionally empty?"
     echo ">>> deb_pkg_info($pkg_count)"
     cd "${inputDir}/${subpath}" || err "unable to cd to $inputDir / $subpath"
 
@@ -274,7 +274,7 @@ deb_metadata() {
         gpg -u ${gpgkeyName} --yes --armor --detach-sign --personal-digest-preferences SHA512 --output Release.gpg Release || err "gpg failed to detach signature"
         [[ -f "Release.gpg" ]] || err "Release.gpg file not found"
         echo ":: Release.gpg"
-        gpg -u ${gpgkeyName} --yes --clearsign --output InRelease Release || err "InRelease failed"
+        gpg -u ${gpgkeyName} --yes --clearsign --personal-digest-preferences SHA256 --output InRelease Release || err "InRelease failed"
         [[ -f "InRelease" ]] || err "InRelease file not found"
         echo ":: InRelease"
     fi

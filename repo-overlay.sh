@@ -14,13 +14,14 @@ optimize=1     # try to reduce image size
 
 clean_up() {
     cd /
-    [[ -d "$mountDir" ]] && sudo umount "$mountDir"
+    [[ -d "$mountDir" ]] && [[ -n "$rootless" ]] && fusermount -u "$mountDir"
+    [[ -d "$mountDir" ]] && [[ -z "$rootless" ]] && sudo umount "$mountDir"
     [[ -d "$mountDir" ]] && rmdir "$mountDir"
-    [[ -d "$mountDir" ]] && sudo umount -l "$mountDir"
-    [[ -d "$scratch" ]] && sudo umount "$scratch"
+    [[ -d "$mountDir" ]] && [[ -z "$rootless" ]] && sudo umount -l "$mountDir"
+    [[ -d "$scratch"  ]] && [[ -z "$rootless" ]] && sudo umount "$scratch"
     [[ -f "$onetimeFS" ]] && rm "$onetimeFS"
     [[ -d "$mountDir" ]] && rmdir "$mountDir"
-    [[ -d "$scratch" ]] && rm -rf "$scratch"
+    [[ -d "$scratch"  ]] && rm -rf "$scratch"
     [[ -d "$tempDir/tmp" ]] && rmdir "$tempDir/tmp"
 }
 
@@ -51,6 +52,7 @@ usage() {
     echo -e "  --size=<megabytes>\t image file size for overlay\t\t\t (default: $imgSize)"
     echo -e "  --keep-new\t\t save the new files\t\t\t\t $savepkgs"
     echo -e "  --no-cache\t\t do not use mirror as base\t\t\t\t $nocache"
+    echo -e "  --no-sign\t\t do not use GPG sign metadata (use external sign server)\t\t\t\t $nosign"
     echo -e "  --debug\t\t verbose output\t\t $debug"
     echo -e "  --clean\t\t un-mount stale overlayFS mountpoints\t\t $clean"
     echo
@@ -77,7 +79,7 @@ preflight_checks() {
     # Minimum requirements
     kernelMajor=$(uname -r 2>/dev/null | awk -F '.' '{print $1}')
     pythonMajor=$(type -p python3 2>/dev/null)
-    createRepo=$(type -p createrepo_c 2>/dev/null)
+    createRepo=$(type -p createrepo_c createrepo 2>/dev/null | awk NR==1)
     [[ $kernelMajor -gt 3 ]] || err "Kernel must be 4.x or newer for overlayFS"
     [[ $pythonMajor =~ "3" ]] || err "Python 3.x required for modularity"
     [[ -n $createRepo ]] || err "Missing depends for RPM repos"
@@ -97,6 +99,11 @@ preflight_checks() {
     if [[ -n $nocache ]]; then
         passthrough+=" --nocache "
     fi
+
+    # Disable GPG signing
+    if [[ -n $nosign ]]; then
+        passthrough+=" --gpgkey=UNSIGNED "
+    fi
 }
 
 package_metadata() {
@@ -104,7 +111,7 @@ package_metadata() {
     repos=$(find ${active[@]} -mindepth 2 -maxdepth 2 -type d 2>/dev/null | rev | sed -e 's|/|\t|' -e 's|/|\t|' | rev | sort -k2,3 -r | uniq -f1 | sed 's|\t|/|g')
     echo $repos
     for path in $repos; do
-        unset subpath mirrorDriver pathDriver skipNext
+        unset subpath moreArgs unknownDistro skipNext
         subpath=$(echo $path | awk -F "/" '{print $(NF-1)"/"$(NF)}')
         rpmFormat=$(ls $path/*.rpm 2>/dev/null | awk NR==1)
         debFormat=$(ls $path/*.deb 2>/dev/null | awk NR==1)
@@ -116,20 +123,30 @@ package_metadata() {
             fi
         fi
 
+        subdist=$(dirname "$subpath" 2>/dev/null | grep -v "^\.$")
+        subarch=$(basename "$subpath" 2>/dev/null | grep -v "^\.$")
+        if [[ -z "$subdist" ]] || [[ -z "$subarch" ]]; then
+            unknownDistro=1
+        elif [[ "$subdist" == "$subarch" ]]; then
+            unknownDistro=1
+        else
+            moreArgs=" --distro=$subdist --arch=$subarch "
+        fi
+
         if [[ -n "$skipNext" ]]; then
             echo "==> skipping repo: $subpath"
         elif [[ -n "$rpmFormat" ]]; then
             unset rpmFormat
-            echo "==> rpm_metadata $passthrough --input $mountDir --mirror $mirror --repo $subpath"
-            time $rpmMetadata $passthrough --input "$mountDir" --mirror "$mirror" --repo "$subpath"
+            echo "==> rpm_metadata $passthrough $moreArgs --input $mountDir --mirror $mirror --repo $subpath"
+            time $rpmMetadata $passthrough $moreArgs --input "$mountDir" --mirror "$mirror" --repo "$subpath"
             echo
         elif [[ -n "$debFormat" ]]; then
             unset debFormat
-            echo "==> deb_metadata $passthrough --input $mountDir --mirror $mirror --repo $subpath"
-            time $debianMetadata $passthrough --input "$mountDir" --mirror "$mirror" --repo "$subpath"
+            echo "==> deb_metadata $passthrough $moreArgs --input $mountDir --mirror $mirror --repo $subpath"
+            time $debianMetadata $passthrough $moreArgs --input "$mountDir" --mirror "$mirror" --repo "$subpath"
             echo
         else
-            echo "==> skipping unimplemented format: $subpath"
+            echo "==> skipping unimplemented format: $subpath $moreArgs"
         fi
     done
     echo
@@ -192,20 +209,25 @@ mount_overlay() {
     [[ -d "$scratch/workdir" ]] || err "directory $scratch/workdir does not exist"
     [[ -d "$mountDir" ]] || err "directory $mountDir does not exist"
 
-    echo ">>> sudo mount -t overlay -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir"
-    sudo mount -t overlay -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir || err "mount -t overlay"
+    if [[ $rootless -eq 1 ]]; then
+        echo ">>> fuse-overlayfs -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir"
+        fuse-overlayfs -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir || err "mount -t overlay"
+    else
+        echo ">>> sudo mount -t overlay -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir"
+        sudo mount -t overlay -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir || err "mount -t overlay"
+    fi
     echo
 }
 
 save_new_metadata() {
-    echo ":: Saving to $outputDir"
+    echo ":: Saving metadata to $outputDir"
     # Metadata
     run_rsync "${scratch}/upper"/ "$outputDir"
     echo
 }
 
 save_new_packages() {
-    echo ":: Saving to $outputDir"
+    echo ":: Saving packages to $outputDir"
     # Packages
     repos=$(find ${active[@]} -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)
     for path in $repos; do
@@ -257,12 +279,18 @@ while [[ $1 =~ ^-- ]]; do
     # Do not use source of truth
     elif [[ "$1" == "--no-cache" ]] || [[ "$1" == "--nocache" ]]; then
         nocache=1
+    # Disable metadata signing
+    elif [[ "$1" == "--no-sign" ]] || [[ "$1" == "--nosign" ]]; then
+        nosign=1
     # Clean overlayFS mount
     elif [[ "$1" == "--clean" ]]; then
         clean=1
     # Verbose
     elif [[ "$1" == "--debug" ]]; then
         debug=1
+    # Use FUSE implementation of overlayFS (does not require root permissions!)
+    elif [[ "$1" == "--fuse" ]] || [[ -n $ROOTLESS ]] || [[ -n $FUSEOVERLAY ]]; then
+        rootless=1
     # Usage
     elif [[ "$1" == "--help" ]]; then
         usage
@@ -309,8 +337,8 @@ done
 layers+="$mirror"
 
 # Sanity checks
-[[ -d $mirror ]] || usage "Must specify --mirror path to public snapshot"
-[[ -d $dir ]] || usage "Must specify at least one directory to overlay"
+[[ -d $mirror ]] || usage "Must specify --mirror path to public snapshot [$mirror]"
+[[ -d $dir ]] || usage "Must specify at least one directory to overlay [$dir]"
 preflight_checks "$1"
 
 # Sanity
@@ -324,7 +352,11 @@ if [[ -n "$optimize" ]] && [[ -z "$customSize" ]]; then
 fi
 
 # Create scratch filesystem
-mount_tempfs
+if [[ -z $rootless ]]; then
+    mount_tempfs
+else
+    echo "==> scratch: $scratch"
+fi
 
 # Overlay filesystems as layers
 mount_overlay
@@ -345,4 +377,5 @@ clean_up
 [[ -d "$tempDir/empty" ]] &&
 rmdir "$tempDir/empty"
 
+true
 ### END ###

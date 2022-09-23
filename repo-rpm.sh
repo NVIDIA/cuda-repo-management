@@ -3,7 +3,7 @@
 # Copyright 2021, NVIDIA Corporation
 # SPDX-License-Identifier: MIT
 
-publicKey="7fa2af80" # set this to shortname for GPG keypair
+publicKey="D42D0685" # set this to shortname for GPG keypair
 moduleName="nvidia-driver"
 
 current=$(readlink -e "$(dirname ${BASH_SOURCE[0]})")
@@ -85,14 +85,16 @@ compare_rpm_md5sum() {
 }
 
 check_modular() {
-    local distro="$1"
     local distnum=$(echo "$distro" | tr -dc '0-9\n')
 
     if [[ "$distro" =~ "rhel" ]] && [[ "$distnum" -ge 8 ]]; then
+        echo "Detected RHEL >= 8, turning on modularity"
         modular=1
     elif [[ "$distro" =~ "fedora" ]] && [[ "$distnum" -ge 28 ]]; then
+        echo "Detected Fedora >= 28, turning on modularity"
         modular=1
     else
+        echo "Non modularity distro detected ($distro : $distnum), keeping modularity off"
         return 0
     fi
 
@@ -114,20 +116,28 @@ check_modular() {
 
 rpm_modularity() {
     local rpmdir="$1"
+
+    if [[ $modular -ne 1 ]]; then
+        return
+    fi
+
+    echo "Running modularity with (remoteModules = $remoteModules) (localModules = $localModules)"
     # Driver streams expect driver packages present
     if [[ -n "$remoteModules" ]] || [[ -n "$localModules" ]]; then
         echo "%%%%%%%%%%%%%%%%%%"
         echo "%%% Modularity %%%"
         echo "%%%%%%%%%%%%%%%%%%"
 
-        echo ">>> python3 $genmodules $PWD $rpmdir/modules.yaml"
-        python3 $genmodules "$PWD" ${rpmdir}/modules.yaml || err "./genmodules.py $PWD $rpmdir/modules.yaml"
+        echo ">>> python3 $genmodules $rpmdir $rpmdir/modules.yaml"
+        python3 $genmodules "$rpmdir" ${rpmdir}/modules.yaml || err "./genmodules.py $rpmdir $rpmdir/modules.yaml"
         [[ -f "${rpmdir}/modules.yaml" ]] || err "modules.yaml not found at $rpmdir"
         echo
 
         echo ">>> modifyrepo_c modules.yaml $rpmdir/repodata"
         modifyrepo_c ${rpmdir}/modules.yaml $rpmdir/repodata || err "modifyrepo_c ${rpmdir}/modules.yaml ${rpmdir}/repodata"
         echo
+    else
+        echo "Skipping modularity as there's no local/remote modules"
     fi
 }
 
@@ -141,9 +151,13 @@ rpm_metadata() {
     cd "$parent"/"$subpath" || err "unable to cd to $parent / $subpath"
 
     #FIXME WAR for overlayFS invalid cross-device link
-    [[ -d repodata ]] &&
-    mkdir old &&
-    mv repodata old
+    if [[ -n "$DEVMODE" ]]; then
+        echo "[FIXME] remove old repo metadata files"
+    else
+        [[ -d repodata ]] &&
+        mkdir old &&
+        mv repodata old
+    fi
 
     #
     # Process new or modified RPM packages
@@ -284,7 +298,7 @@ rm -f -- "$logFile"
 # Detect modularity
 localModules=$(ls ${inputDir}/${subpath}/${moduleName}* 2>/dev/null | awk NR==1)
 remoteModules=$(ls ${mirror}/${subpath}/${moduleName}* 2>/dev/null | awk NR==1)
-check_modular "$subpath"
+check_modular
 
 # Update RPM metadata
 rpm_metadata "$mirror" "$inputDir" "$subpath"
