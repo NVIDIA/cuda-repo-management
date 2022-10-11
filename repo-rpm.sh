@@ -93,6 +93,9 @@ check_modular() {
     elif [[ "$distro" =~ "fedora" ]] && [[ "$distnum" -ge 28 ]]; then
         echo "Detected Fedora >= 28, turning on modularity"
         modular=1
+    elif [[ "$distro" =~ "kylin" ]]; then
+        echo "Detected Kylin, turning on modularity"
+        modular=1
     else
         echo "Non modularity distro detected ($distro : $distnum), keeping modularity off"
         return 0
