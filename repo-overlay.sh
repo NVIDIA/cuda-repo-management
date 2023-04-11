@@ -169,7 +169,7 @@ min_tempsize() {
     echo
 
     # Powers of 2
-    for n in $(seq 1 12); do
+    for n in $(seq 1 13); do
         powerTwo=$((2**n))
         if [[ $repoSum -le $powerTwo ]]; then
             break
