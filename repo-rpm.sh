@@ -7,7 +7,9 @@ publicKey="D42D0685" # set this to shortname for GPG keypair
 moduleName="nvidia-driver"
 
 current=$(readlink -e "$(dirname ${BASH_SOURCE[0]})")
+parent=$(dirname "$current")
 genmodulesLOCAL="${current}/genmodules.py"
+genmodulesPARENT="${parent}/genmodules.py"
 genmodulesPATH=$(type -p genmodules.py)
 
 
@@ -103,6 +105,8 @@ check_modular() {
 
     if [[ -f "$genmodulesLOCAL" ]]; then
         genmodules="$genmodulesLOCAL"
+    elif [[ -f "$genmodulesPARENT" ]]; then
+        genmodules="$genmodulesPARENT"
     elif [[ -n "$genmodulesPATH" ]]; then
         genmodules="$genmodulesPATH"
     elif [[ -z "$remoteModules" ]] && [[ -z "$localModules" ]]; then
