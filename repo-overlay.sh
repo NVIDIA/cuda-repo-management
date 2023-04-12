@@ -12,6 +12,9 @@ tempDir="$PWD"
 imgSize="2048" # 2 GiB
 optimize=1     # try to reduce image size
 
+uidmapping="squash_to_uid=$(id -u),squash_to_gid=$(id -g)"
+FUSEOPTS+="$uidmapping"
+
 clean_up() {
     cd /
     [[ -d "$mountDir" ]] && [[ -n "$rootless" ]] && fusermount -u "$mountDir"
@@ -210,8 +213,9 @@ mount_overlay() {
     [[ -d "$mountDir" ]] || err "directory $mountDir does not exist"
 
     if [[ $rootless -eq 1 ]]; then
-        echo ">>> fuse-overlayfs -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir"
-        fuse-overlayfs -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir || err "mount -t overlay"
+        [[ -n $FUSEOPTS ]] && FUSEOPTS="${FUSEOPTS},"
+        echo ">>> fuse-overlayfs -o ${FUSEOPTS}lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir"
+        fuse-overlayfs -o ${FUSEOPTS}lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir || err "mount -t overlay"
     else
         echo ">>> sudo mount -t overlay -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir"
         sudo mount -t overlay -o lowerdir=${layers},upperdir=${scratch}/upper,workdir=${scratch}/workdir none $mountDir || err "mount -t overlay"
