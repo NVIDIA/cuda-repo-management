@@ -63,9 +63,9 @@ compare_debian_md5sum() {
     file1=$(deb_md5sum "$1" "$3")
     file2=$(deb_md5sum "$2" "$3")
 
-    echo "$file1"
-    echo "---"
-    echo "$file2"
+    #echo "$file1"
+    #echo "---"
+    #echo "$file2"
     echo "---------"
 
     two_way=$(comm -1 -3 <(echo "$file1" | sort) <(echo "$file2" | sort) | grep -v "^==>" | sort -k2)
@@ -89,15 +89,23 @@ deb_pkg_stale() {
     rsync -a "$1" "$donor_file"
 
     for pkg in $old_packages; do
-        context=$(grep -nE -e "^$" -e "^Filename:" "$donor_file" 2>/dev/null | grep -C1 -E "Filename:( |.*/)${pkg}$")
-        length=$(wc -l "$donor_file" 2>/dev/null | awk '{print $1}')
-        block_new=$(echo "$context" | grep ":$" | sed 's|:||' | head -n1)
-        block_end=$(echo "$context" | grep ":$" | sed 's|:||' | tail -n1)
-        head -n "$block_new" "$donor_file" > "${donor_file}.head"
-        tail -n $((length-block_end)) "$donor_file" > "${donor_file}.tail"
-        cat "${donor_file}.head" "${donor_file}.tail" > "${donor_file}"
-        echo ":: removed $pkg"
-        rm -f "${donor_file}.head" "${donor_file}.tail"
+        context=$(grep -nE -e "^$" -e "^Filename:" "$donor_file" 2>/dev/null | grep -C1 -m1 -E "Filename:( |.*/)${pkg}$")
+        range=($(echo "$context" | grep -v -e "$pkg" -e "^\-" | sed 's|:||g' | paste -d, - -))
+        for block_range in ${range[@]}; do
+            length=$(wc -l "$donor_file" 2>/dev/null | awk '{print $1}')
+            block_new=$(echo "$block_range" | awk -F "," '{print $1}')
+            [[ "$block_new" =~ ^[0-9]+$ ]] || continue
+            block_end=$(echo "$block_range" | awk -F "," '{print $2}')
+            [[ "$block_end" =~ ^[0-9]+$ ]] || continue
+
+#tail -n +$block_new "$donor_file" | head -n $((block_end-block_new))
+
+            head -n "$block_new" "$donor_file" > "${donor_file}.head"
+            tail -n $((length-block_end)) "$donor_file" > "${donor_file}.tail"
+            cat "${donor_file}.head" "${donor_file}.tail" > "${donor_file}"
+            echo ":: removed $pkg"
+            rm -f "${donor_file}.head" "${donor_file}.tail"
+        done
     done
     echo
 }
