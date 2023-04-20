@@ -80,6 +80,28 @@ compare_debian_md5sum() {
     echo ":: $diff_count metadata file(s) added or modified"
 }
 
+deb_pkg_stale() {
+    local donor_file=$(echo "$1" | sed -e 's|$|\.stale|' -e 's|\.old||')
+    local stale_count=$(echo "$old_packages" | wc -l)
+    [[ $stale_count -gt 0 ]] || return
+    echo ">>> deb_pkg_stale($stale_count)"
+    [[ -f "$1" ]] &&
+    rsync -a "$1" "$donor_file"
+
+    for pkg in $old_packages; do
+        context=$(grep -nE -e "^$" -e "^Filename:" "$donor_file" 2>/dev/null | grep -C1 -E "Filename:( |.*/)${pkg}$")
+        length=$(wc -l "$donor_file" 2>/dev/null | awk '{print $1}')
+        block_new=$(echo "$context" | grep ":$" | sed 's|:||' | head -n1)
+        block_end=$(echo "$context" | grep ":$" | sed 's|:||' | tail -n1)
+        head -n "$block_new" "$donor_file" > "${donor_file}.head"
+        tail -n $((length-block_end)) "$donor_file" > "${donor_file}.tail"
+        cat "${donor_file}.head" "${donor_file}.tail" > "${donor_file}"
+        echo ":: removed $pkg"
+        rm -f "${donor_file}.head" "${donor_file}.tail"
+    done
+    echo
+}
+
 find_tag() {
     local index=0
     for key in ${pkg_tags[@]}; do
@@ -171,6 +193,10 @@ deb_metadata() {
         # Skip unmodified packages
         byte_compare=$(comm -1 -3 <(echo "$bytes1" | sort) <(echo "$bytes2"))
         deb_packages=$(echo "$byte_compare" | awk '{print $NF}' | sort)
+
+        # Track modified packages
+        stale_crumbs=$(comm -2 -3 <(echo "$bytes1" | sort) <(echo "$bytes2"))
+        old_packages=$(echo "$stale_crumbs" | awk '{print $NF}' | sort)
         echo "..."
     else
         echo ":: From scratch"
@@ -200,9 +226,14 @@ deb_metadata() {
 
     # Append and rename
     PackagesOld="Packages.old"
+    PackagesFix="Packages.stale"
     if [[ -n "$donorManifest" ]]; then
         echo "$donorManifest" > "$PackagesOld"
         echo >> "$PackagesOld"
+
+        deb_pkg_stale "$PackagesOld"
+        [[ -f "$PackagesFix" ]] && PackagesOld="$PackagesFix"
+
         echo "[Merge] :: cat $PackagesOld $PackagesNew > Packages"
         cat "$PackagesOld" "$PackagesNew" > Packages
     else

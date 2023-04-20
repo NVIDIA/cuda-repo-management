@@ -236,6 +236,12 @@ save_new_packages() {
     repos=$(find ${active[@]} -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)
     for path in $repos; do
         subpath=$(echo $path | awk -F "/" '{print $(NF-1)"/"$(NF)}')
+        if [[ -n "$filter" ]]; then
+            if [[ ! " ${filter[@]} " =~ " $subpath " ]]; then
+                continue
+            fi
+        fi
+
         mkdir -p "$outputDir/${subpath}"/
         run_rsync --include="*.deb" --include="*.rpm" --include="*.repo" --include="*.pin" --include="*.pub" --include="*.json" --exclude="*" "${path}"/ "$outputDir/${subpath}"/
 
