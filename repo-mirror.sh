@@ -86,10 +86,16 @@ download_files()
     done
 }
 
-copy_debs()
+
+meta_debs()
 {
     repoDEB=("Release" "Release.gpg" "Packages" "Packages.gz")
     metaFiles=$(echo ${repoDEB[@]} | sed 's| |\n|g')
+}
+
+copy_debs()
+{
+    meta_debs
     gzipPath=$(echo "$metaFiles" | grep "\.gz")
 
     echo "==> Parsing $gzipPath"
@@ -103,10 +109,15 @@ copy_debs()
     download_files $packageFiles
 }
 
-copy_rpms()
+meta_rpms()
 {
     repoMD=$(curl -sL "${baseURL}/${distro}/${arch}/repodata/repomd.xml")
     metaFiles=$(echo "$repoMD" | grep "href=" | awk -F '"' '{print $2}' | sed '1irepodata/repomd.xml')
+}
+
+copy_rpms()
+{
+    meta_rpms
     gzipPath=$(echo "$metaFiles" | grep primary\.xml)
 
     echo "==> Parsing $gzipPath"
@@ -222,9 +233,11 @@ fi
 
 # Do mirroring
 if [[ "$distro" =~ "fedora" ]] || [[ "$distro" =~ "rhel" ]] || [[ "$distro" =~ "sles" ]] || [[ "$distro" =~ "suse" ]]; then
+    meta_rpms
     [[ $packages == 1 ]] && copy_rpms
     [[ $metadata == 1 ]] && copy_other
 elif [[ "$distro" =~ "debian" ]] || [[ "$distro" =~ "ubuntu" ]]; then
+    meta_debs
     [[ $packages == 1 ]] && copy_debs
     [[ $metadata == 1 ]] && copy_other
 else
