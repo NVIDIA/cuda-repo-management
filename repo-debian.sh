@@ -243,7 +243,7 @@ deb_metadata() {
         [[ -f "$PackagesFix" ]] && PackagesOld="$PackagesFix"
 
         echo "[Merge] :: cat $PackagesOld $PackagesNew > Packages"
-        cat "$PackagesOld" "$PackagesNew" > Packages
+        cat "$PackagesOld" "$PackagesNew" > Packages || err "scratch image too small"
     else
         echo "[New] :: mv -v $PackagesNew Packages"
         mv -v "$PackagesNew" Packages
