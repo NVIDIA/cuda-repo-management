@@ -10,7 +10,6 @@ rpmMetadata="${current}/repo-rpm.sh"
 outputDir="$PWD/new"
 tempDir="$PWD"
 imgSize="2048" # 2 GiB
-optimize=1     # try to reduce image size
 
 uidmapping="squash_to_uid=$(id -u),squash_to_gid=$(id -g)"
 FUSEOPTS+="$uidmapping"
@@ -56,6 +55,7 @@ usage() {
     echo -e "  --keep-new\t\t save the new files\t\t\t\t $savepkgs"
     echo -e "  --no-cache\t\t do not use mirror as base\t\t\t\t $nocache"
     echo -e "  --no-sign\t\t do not use GPG sign metadata (use external sign server)\t\t\t\t $nosign"
+    echo -e "  --no-sparse\t\t do not sparsely allocate image size"
     echo -e "  --debug\t\t verbose output\t\t $debug"
     echo -e "  --clean\t\t un-mount stale overlayFS mountpoints\t\t $clean"
     echo
@@ -141,12 +141,12 @@ package_metadata() {
         elif [[ -n "$rpmFormat" ]]; then
             unset rpmFormat
             echo "==> rpm_metadata $passthrough $moreArgs --input $mountDir --mirror $mirror --repo $subpath"
-            time $rpmMetadata $passthrough $moreArgs --input "$mountDir" --mirror "$mirror" --repo "$subpath"
+            time $rpmMetadata $passthrough $moreArgs --input "$mountDir" --mirror "$mirror" --repo "$subpath" || err "RPM metadata failed"
             echo
         elif [[ -n "$debFormat" ]]; then
             unset debFormat
             echo "==> deb_metadata $passthrough $moreArgs --input $mountDir --mirror $mirror --repo $subpath"
-            time $debianMetadata $passthrough $moreArgs --input "$mountDir" --mirror "$mirror" --repo "$subpath"
+            time $debianMetadata $passthrough $moreArgs --input "$mountDir" --mirror "$mirror" --repo "$subpath" || err "Debian metadata failed"
             echo
         else
             echo "==> skipping unimplemented format: $subpath $moreArgs"
@@ -189,9 +189,22 @@ min_tempsize() {
 }
 
 mount_tempfs() {
-    echo ":: Create scratch filesystem: $scratch"
-    echo ">>> dd if=/dev/zero of=$onetimeFS bs=1M count=${imgSize}"
-    dd if=/dev/zero of="$onetimeFS" bs=1M count=${imgSize} || err "dd ${onetimeFS} ${imgSize}MB"
+    if [[ -z $nosparse ]] && [[ -z $customSize ]]; then
+        # 16GB max, only allocate as much as needed
+        imgSize=$((imgSize * 8))
+    fi
+
+    echo ":: Create scratch filesystem: $scratch [$imgSize MB]"
+
+    if [[ -n $nosparse ]]; then
+        echo ">>> dd if=/dev/zero of=$onetimeFS bs=1M count=${imgSize}"
+        dd if=/dev/zero of="$onetimeFS" bs=1M count=${imgSize} || err "dd ${onetimeFS} ${imgSize}MB"
+    else
+        echo ">>> truncate -s ${imgSize} $onetimeFS"
+        truncate -s ${imgSize}M "$onetimeFS"
+    fi
+
+    du -sch "$onetimeFS"
     mkfs -t ext4 -F "$onetimeFS" || err "mkfs.ext4"
 
     mkdir -p $scratch || err "mkdir -p $scratch"
@@ -292,6 +305,9 @@ while [[ $1 =~ ^-- ]]; do
     # Disable metadata signing
     elif [[ "$1" == "--no-sign" ]] || [[ "$1" == "--nosign" ]]; then
         nosign=1
+    # Sparsely allocate image size
+    elif [[ "$1" == "--no-sparse" ]] || [[ "$1" == "--nosparse" ]]; then
+        nosparse=1
     # Clean overlayFS mount
     elif [[ "$1" == "--clean" ]]; then
         clean=1
@@ -357,7 +373,7 @@ if [[ -z $active ]]; then
     exit 1
 fi
 
-if [[ -n "$optimize" ]] && [[ -z "$customSize" ]]; then
+if [[ -n "$nosparse" ]] && [[ -z "$customSize" ]]; then
     min_tempsize ${active[@]}
 fi
 
@@ -373,6 +389,8 @@ mount_overlay
 
 # Generate repo metadata
 package_metadata
+
+du -sch "$onetimeFS"
 
 # Save new packages to disk
 if [[ -n $savepkgs ]]; then

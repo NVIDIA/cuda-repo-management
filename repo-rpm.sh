@@ -189,7 +189,7 @@ rpm_metadata() {
     pkg_diff=$(comm -1 -3 <(echo "$pkg_cache" | sort) <(echo "$pkg_list" | sort))
     for pkg in $(echo -e "${pkg_diff}\n${pkg_modify}" | sort -u); do
         echo ":: ${subpath}/${pkg}"
-        echo "${subpath}/${pkg}" >> "$fileManifest"
+        echo "${subpath}/${pkg}" >> "$fileManifest" || err "scratch image too small"
     done
     echo
 
