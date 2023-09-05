@@ -160,10 +160,14 @@ rpm_metadata() {
     #FIXME WAR for overlayFS invalid cross-device link
     if [[ -n "$DEVMODE" ]]; then
         echo "[FIXME] remove old repo metadata files"
-    else
-        [[ -d repodata ]] &&
-        mkdir old &&
-        mv repodata old
+    elif [[ -f "repodata/repomd.xml" ]]; then
+        mkdir -p old/repodata
+        for file in $(grep "href=" "repodata/repomd.xml" 2>/dev/null | awk -F '"' '{print $2}'); do
+            mv -v "$file" old/repodata
+        done
+        mv -v "repodata/repomd.xml" old/repodata/
+        rm -rf repodata
+        #mv old repodata
     fi
 
     #
