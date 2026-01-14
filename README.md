@@ -9,6 +9,29 @@ Scripts for managing Debian and RPM package repositories containing many files.
 See [concept](#concept), [metadata](#metadata), and [presentations](#presentations) sections below.
 
 
+## GPG keys
+
+Active pubkeys for [https://developer.download.nvidia.com/compute/cuda/repos/](https://developer.download.nvidia.com/compute/cuda/repos/)
+
+| Distro      | Shortname   | Entrypoint |
+| ----------- | ----------- | ---------- |
+| amzn2023    | `D42D0685`  | [cuda-amzn2023.repo](https://developer.download.nvidia.com/compute/cuda/repos/amzn2023/x86_64/cuda-amzn2023.repo)      |
+| azl3        | `D42D0685`  | [cuda-azl3.repo](https://developer.download.nvidia.com/compute/cuda/repos/azl3/x86_64/cuda-azl3.repo)      |
+| debian12    | `3bf863cc`  | [cuda-keyring_1.1-1_all.deb](https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb)      |
+| debian13    | `8793F200`  | [cuda-keyring_1.1-1_all.deb](https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb)      |
+| fedora42    | `D42D0685`  | [cuda-fedora42.repo](https://developer.download.nvidia.com/compute/cuda/repos/fedora42/x86_64/cuda-fedora42.repo)      |
+| fedora43    | `1940C73E`  | -      |
+| kylin10     | `D42D0685`  | [cuda-kylin10](https://developer.download.nvidia.com/compute/cuda/repos/kylin10/x86_64/cuda-kylin10.repo)      |
+| el8         | `D42D0685`  | [cuda-rhel8](https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo)      |
+| el9         | `D42D0685`  | [cuda-rhel9](https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo)      |
+| el10        | `CDF6BA43`  | [cuda-rhel10](https://developer.download.nvidia.com/compute/cuda/repos/rhel10/x86_64/cuda-rhel10.repo)      |
+| opensuse15  | `D42D0685`  | [cuda-opensuse15](https://developer.download.nvidia.com/compute/cuda/repos/opensuse15/x86_64/cuda-opensuse15.repo)      |
+| sles15      | `D42D0685`  | [cuda-sles15](https://developer.download.nvidia.com/compute/cuda/repos/sles15/x86_64/cuda-sles15.repo)      |
+| ubuntu2204  | `3bf863cc`  | [cuda-keyring_1.1-1_all.deb](https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb)      |
+| ubuntu2404  | `3bf863cc`  | [cuda-keyring_1.1-1_all.deb](https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb)      |
+| ubuntu2604  | `60DF8A40`  | -      |
+
+
 ## Table of Contents
 
 - [Overview](#overview)
