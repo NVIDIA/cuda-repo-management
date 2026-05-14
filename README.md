@@ -125,15 +125,6 @@ git clone https://github.com/NVIDIA/cuda-repo-management
 cd cuda-repo-management
 ```
 
-### (Optional) fetch genmodules
-
-> _note_: [genmodules.py](https://github.com/NVIDIA/yum-packaging-precompiled-kmod/blob/main/genmodules.py
-) is needed for generating modularity streams for NVIDIA driver packages
-
-```shell
-wget https://raw.githubusercontent.com/NVIDIA/yum-packaging-precompiled-kmod/main/genmodules.py
-```
-
 ### Install build dependencies
 
 ```shell
