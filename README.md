@@ -21,6 +21,7 @@ Active pubkeys for [https://developer.download.nvidia.com/compute/cuda/repos/](h
 | debian13    | `8793F200`  | [cuda-keyring_1.1-1_all.deb](https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb)      |
 | fedora42    | `D42D0685`  | [cuda-fedora42.repo](https://developer.download.nvidia.com/compute/cuda/repos/fedora42/x86_64/cuda-fedora42.repo)      |
 | fedora43    | `1940C73E`  | -      |
+| fedora44    | `73CD9B30`  | [cuda-fedora44.repo](https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo)      |
 | kylin10     | `D42D0685`  | [cuda-kylin10](https://developer.download.nvidia.com/compute/cuda/repos/kylin10/x86_64/cuda-kylin10.repo)      |
 | el8         | `D42D0685`  | [cuda-rhel8](https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo)      |
 | el9         | `D42D0685`  | [cuda-rhel9](https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo)      |
